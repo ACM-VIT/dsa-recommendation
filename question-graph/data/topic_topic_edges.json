@@ -1,0 +1,188 @@
+[
+  {
+    "source_topic_id": "array",
+    "target_topic_id": "hash_map",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "array",
+    "target_topic_id": "prefix_sum",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "array",
+    "target_topic_id": "two_pointers",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "array",
+    "target_topic_id": "sliding_window",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "array",
+    "target_topic_id": "binary_search",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "string",
+    "target_topic_id": "hash_map",
+    "relation_type": "prerequisite",
+    "strength": 0.5
+  },
+  {
+    "source_topic_id": "string",
+    "target_topic_id": "sliding_window",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "string",
+    "target_topic_id": "trie",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "hash_map",
+    "target_topic_id": "sliding_window",
+    "relation_type": "prerequisite",
+    "strength": 0.5
+  },
+  {
+    "source_topic_id": "hash_map",
+    "target_topic_id": "prefix_sum",
+    "relation_type": "prerequisite",
+    "strength": 0.5
+  },
+  {
+    "source_topic_id": "linked_list",
+    "target_topic_id": "two_pointers",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "linked_list",
+    "target_topic_id": "fast_slow_pointers",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "recursion",
+    "target_topic_id": "backtracking",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "recursion",
+    "target_topic_id": "dynamic_programming",
+    "relation_type": "prerequisite",
+    "strength": 0.5
+  },
+  {
+    "source_topic_id": "tree",
+    "target_topic_id": "dfs",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "tree",
+    "target_topic_id": "bfs",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "tree",
+    "target_topic_id": "binary_search_tree",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "graph",
+    "target_topic_id": "dfs",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "graph",
+    "target_topic_id": "bfs",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "graph",
+    "target_topic_id": "union_find",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "graph",
+    "target_topic_id": "topological_sort",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "graph",
+    "target_topic_id": "shortest_path",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "dfs",
+    "target_topic_id": "topological_sort",
+    "relation_type": "prerequisite",
+    "strength": 0.5
+  },
+  {
+    "source_topic_id": "bfs",
+    "target_topic_id": "topological_sort",
+    "relation_type": "prerequisite",
+    "strength": 0.5
+  },
+  {
+    "source_topic_id": "shortest_path",
+    "target_topic_id": "dijkstra",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "shortest_path",
+    "target_topic_id": "floyd_warshall",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "dynamic_programming",
+    "target_topic_id": "bitmask_dp",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "dynamic_programming",
+    "target_topic_id": "digit_dp",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "dynamic_programming",
+    "target_topic_id": "tree_dp",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "heap",
+    "target_topic_id": "priority_queue",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  },
+  {
+    "source_topic_id": "trie",
+    "target_topic_id": "string_matching",
+    "relation_type": "prerequisite",
+    "strength": 1.0
+  }
+]

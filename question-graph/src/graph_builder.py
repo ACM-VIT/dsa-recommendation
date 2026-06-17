@@ -1,103 +1,119 @@
 import json
+from pathlib import Path
 
-with open("../data/questions.json", "r", encoding="utf-8") as f:
-    questions = json.load(f)
+import networkx as nx
 
-# -----------------
-#  QUESTION NODES
-# -----------------
 
-nodes = []
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR.parent / "data"
 
-for q in questions:
-    nodes.append({
-        "id": q["title_slug"],
-        "type": "question"
-    })
+PROBLEM_FILE = DATA_DIR / "problem_nodes.json"
+TOPIC_FILE = DATA_DIR / "topic_nodes.json"
+PROBLEM_TOPIC_EDGE_FILE = DATA_DIR / "problem_topic_edges.json"
+TOPIC_TOPIC_EDGE_FILE = DATA_DIR / "topic_topic_edges.json"
 
-# -----------------
-#   TOPIC NODES
-# -----------------
+OUTPUT_GRAPH = BASE_DIR / "pcg_graph.graphml"
 
-topics = {}
 
-for q in questions:
-    desc = q["description"].lower()
+def load_json(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-    if "array" in desc:
-        topics["array"] = True
 
-    if "string" in desc:
-        topics["string"] = True
+def clean_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
 
-    if "linked list" in desc:
-        topics["linked_list"] = True
 
-    if "tree" in desc:
-        topics["tree"] = True
+def add_attrs(graph, node_id, **attrs):
+    graph.add_node(
+        node_id,
+        **{key: clean_value(value) for key, value in attrs.items()}
+    )
 
-    if "graph" in desc:
-        topics["graph"] = True
 
-for topic in topics:
-    nodes.append({
-        "id": topic,
-        "type": "topic"
-    })
+def main():
+    problems = load_json(PROBLEM_FILE)
+    topics = load_json(TOPIC_FILE)
+    problem_topic_edges = load_json(PROBLEM_TOPIC_EDGE_FILE)
+    topic_topic_edges = load_json(TOPIC_TOPIC_EDGE_FILE)
 
-# -----------------
-#      EDGES
-# -----------------
+    G = nx.DiGraph()
 
-edges = []
+    for p in problems:
+        problem_id = p["problem_id"]
 
-for q in questions:
-    desc = q["description"].lower()
+        add_attrs(
+            G,
+            f"problem:{problem_id}",
+            node_type="problem",
+            problem_id=problem_id,
+            title=p.get("title"),
+            difficulty_score=p.get("difficulty_score"),
+            cf_rating=p.get("cf_rating"),
+            contest_id=p.get("contest_id"),
+            problem_index=p.get("problem_index"),
+            source=p.get("source"),
+            url=p.get("url"),
+            tags=p.get("tags"),
+            skill_types=p.get("skill_types"),
+            time_limit=p.get("time_limit"),
+            memory_limit=p.get("memory_limit"),
+            expected_time_complexity=p.get("expected_time_complexity"),
+            expected_space_complexity=p.get("expected_space_complexity"),
+        )
 
-    if "array" in desc:
-        edges.append({
-            "source": q["title_slug"],
-            "target": "array",
-            "relation": "has_topic"
-        })
+    for t in topics:
+        topic_id = t["topic_id"]
 
-    if "string" in desc:
-        edges.append({
-            "source": q["title_slug"],
-            "target": "string",
-            "relation": "has_topic"
-        })
+        add_attrs(
+            G,
+            f"topic:{topic_id}",
+            node_type="topic",
+            topic_id=topic_id,
+            topic_name=t.get("topic_name"),
+            cf_tag=t.get("cf_tag"),
+            difficulty_level=t.get("difficulty_level"),
+            is_root_topic=t.get("is_root_topic"),
+        )
 
-    if "linked list" in desc:
-        edges.append({
-            "source": q["title_slug"],
-            "target": "linked_list",
-            "relation": "has_topic"
-        })
+    for e in problem_topic_edges:
+        problem_node = f"problem:{e['problem_id']}"
+        topic_node = f"topic:{e['topic_id']}"
 
-    if "tree" in desc:
-        edges.append({
-            "source": q["title_slug"],
-            "target": "tree",
-            "relation": "has_topic"
-        })
+        if problem_node in G and topic_node in G:
+            G.add_edge(
+                problem_node,
+                topic_node,
+                edge_type="has_topic",
+                is_primary_topic=clean_value(e.get("is_primary_topic")),
+            )
 
-    if "graph" in desc:
-        edges.append({
-            "source": q["title_slug"],
-            "target": "graph",
-            "relation": "has_topic"
-        })
+    for e in topic_topic_edges:
+        source_topic = f"topic:{e['source_topic_id']}"
+        target_topic = f"topic:{e['target_topic_id']}"
 
-# -----------------
-#      SAVE
-# -----------------
+        if source_topic in G and target_topic in G:
+            G.add_edge(
+                source_topic,
+                target_topic,
+                edge_type=e.get("relation_type", "prerequisite"),
+                strength=e.get("strength", 1.0),
+            )
 
-with open("../data/nodes.json", "w", encoding="utf-8") as f:
-    json.dump(nodes, f, indent=2)
+    print("Problems:", len(problems))
+    print("Topics:", len(topics))
+    print("Problem-topic edges:", len(problem_topic_edges))
+    print("Topic-topic edges:", len(topic_topic_edges))
+    print("Graph nodes:", G.number_of_nodes())
+    print("Graph edges:", G.number_of_edges())
 
-with open("../data/edges.json", "w", encoding="utf-8") as f:
-    json.dump(edges, f, indent=2)
+    nx.write_graphml(G, OUTPUT_GRAPH)
+    print(f"Saved graph -> {OUTPUT_GRAPH}")
 
-print("Total Nodes:", len(nodes))
-print("Total Edges:", len(edges))
+
+if __name__ == "__main__":
+    main()

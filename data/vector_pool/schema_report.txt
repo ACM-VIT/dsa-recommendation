@@ -1,0 +1,33 @@
+=== DSA Engine Vector Pool -- Schema Report ===
+
+Total problems : 2236
+Total columns  : 26
+
+Column                                 dtype           nulls  coverage
+------------------------------------------------------------------------
+  problem_id                           str                 0    100.0%
+  title                                str                 0    100.0%
+  title_slug                           str                 0    100.0%
+  description                          str                 0    100.0%
+  explanation_text                     str                 0    100.0%
+  solution_signature                   str                 0    100.0%
+  canonical_solution                   str                 0    100.0%
+  difficulty_score                     float64             0    100.0%
+  frequency                            float64           856     61.7%
+  rating                               float64           856     61.7%
+  likes                                int64               0    100.0%
+  dislikes                             int64               0    100.0%
+  asked_by_faang                       bool                0    100.0%
+  topic_tags                           object              0    100.0%
+  algorithm_tags                       object              0    100.0%
+  data_structure_tags                  object              0    100.0%
+  patterns                             object              0    100.0%
+  techniques                           object              0    100.0%
+  skill_tags                           object              0    100.0%
+  similar_problem_ids                  object              0    100.0%
+  companies                            object              0    100.0%
+  question_embedding                   object           2236      0.0%
+  solution_embedding                   object           2236      0.0%
+  rgcn_embedding                       object           2236      0.0%
+  question_solution_embedding          object           2236      0.0%
+  full_embedding                       object           2236      0.0%

@@ -14,7 +14,9 @@ router = APIRouter()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 client = QdrantClient(path=os.path.join(BASE_DIR, "qdrant_storage_v2"))
 model = SentenceTransformer('all-MiniLM-L6-v2')
-
+BASE_DIR_DATA = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+with open(os.path.join(BASE_DIR_DATA, "data", "topic_topic_edges_normalized.json"), encoding="utf-8-sig") as f:
+        tt_edges = json.load(f)
 user_mastery_store = {}
 
 class Submission(BaseModel):
@@ -118,11 +120,8 @@ def get_urgency(user_id: str):
         "urgency_scores": urgency_scores
     }
 
-
 @router.get("/recommend/{user_id}")
 def recommend(user_id: str, limit: int = 10):
-    
-
     # Get user state
     mastery = user_mastery_store.get(user_id, {})
     hlr_state = user_hlr_store.get(user_id, {})
@@ -133,20 +132,44 @@ def recommend(user_id: str, limit: int = 10):
     all_topics = set(list(mastery.keys()) + list(hlr_state.keys()))
 
     for topic in all_topics:
-        bkt_score = 1 - mastery.get(topic, 0.15)      # low mastery = high priority
+        bkt_score = 1 - mastery.get(topic, 0.15)
         urgency = calculate_urgency(hlr_state.get(topic, {}), current_time)
         topic_scores[topic] = 0.6 * bkt_score + 0.4 * urgency
 
-    # Pick top 3 weak/overdue topics
-    top_topics = sorted(topic_scores, key=topic_scores.get, reverse=True)[:3]
-
-    if not top_topics:
+    if not topic_scores:
         return {"message": "No history found for user. Start solving problems first.", "candidates": []}
+
+    # Categorize topics explicitly for dashboard
+    # needs_attention — highest HLR urgency
+    urgent_topic = max(
+        hlr_state.keys(),
+        key=lambda t: calculate_urgency(hlr_state[t], current_time)
+    ) if hlr_state else None
+
+    # weak_topic — lowest BKT mastery
+    weak_topic = min(
+        mastery.keys(),
+        key=lambda t: mastery[t]
+    ) if mastery else None
+
+    # current_topic — highest combined score excluding above two
+    remaining = [t for t in topic_scores if t != urgent_topic and t != weak_topic]
+    current_topic = max(remaining, key=topic_scores.get) if remaining else None
+
+    topic_categories = {}
+    if urgent_topic:
+        topic_categories[urgent_topic] = "needs_attention"
+    if weak_topic:
+        topic_categories[weak_topic] = "weak_topic"
+    if current_topic:
+        topic_categories[current_topic] = "current_topic"
+
+    top_topics = [t for t in [urgent_topic, weak_topic, current_topic] if t]
 
     # Query vector pool for each topic separately
     seen = set()
     candidates = []
-    per_topic = max(1, limit // len(top_topics))
+    per_topic = max(1, limit // max(1, len(top_topics)))
 
     for topic in top_topics:
         query_vector = model.encode(topic).tolist()
@@ -166,14 +189,11 @@ def recommend(user_id: str, limit: int = 10):
                     "description": r.payload["description"],
                     "topics": r.payload["topics"],
                     "difficulty_score": r.payload["difficulty_score"],
-                    "score": r.score
+                    "score": r.score,
+                    "category": topic_categories.get(topic, "general")
                 })
 
-    # Load topic topic edges for prerequisite check
-    BASE_DIR_DATA = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(BASE_DIR_DATA, "data", "topic_topic_edges_normalized.json"), encoding="utf-8-sig") as f:
-        tt_edges = json.load(f)
-
+    
     # Rank candidates
     ranked = rank_candidates(
         candidates=candidates,
@@ -186,7 +206,11 @@ def recommend(user_id: str, limit: int = 10):
 
     return {
         "userId": user_id,
-        "top_topics": top_topics,
+        "topic_breakdown": {
+            "needs_attention": urgent_topic,
+            "weak_topic": weak_topic,
+            "current_topic": current_topic
+        },
         "recommended": ranked[0] if ranked else None,
         "all_candidates_ranked": ranked
     }

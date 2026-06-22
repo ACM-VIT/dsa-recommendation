@@ -1,0 +1,185 @@
+import json
+import math
+from collections import defaultdict
+from datetime import datetime, timezone
+
+# Load problem to topics mapping
+import os
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+with open(os.path.join(BASE_DIR, "data", "problem_topic_edges_normalized.json")) as f:
+    pt_edges = json.load(f)
+
+problem_to_topics = defaultdict(list)
+for edge in pt_edges:
+    problem_to_topics[edge["source"]].append(edge["target"])
+
+MIN_HALF_LIFE = 1.0
+MAX_HALF_LIFE = 180.0
+MASTERY_THRESHOLD = 0.75
+RECALL_THRESHOLD = 0.5
+
+
+def seed_half_life_from_cf(cf_submissions, problem_to_topics):
+    """
+    Calculate initial half life per topic from CF history.
+    Called once when user connects their CF account.
+    TODO: wire to /seed_hlr/{user_id} endpoint once CF API is available from backend.
+    """
+    topic_stats = defaultdict(lambda: {"solved": 0, "attempted": 0, "last_seen": None})
+
+    for sub in cf_submissions:
+        problem_id = sub.get("problemId") or sub.get("problem_id")
+        topics = problem_to_topics.get(problem_id, [])
+        for topic in topics:
+            topic_stats[topic]["attempted"] += 1
+            if sub.get("verdict") == "OK":
+                topic_stats[topic]["solved"] += 1
+            if topic_stats[topic]["last_seen"] is None:
+                topic_stats[topic]["last_seen"] = sub.get("timestamp")
+
+    half_lives = {}
+    for topic, stats in topic_stats.items():
+        solve_rate = stats["solved"] / max(1, stats["attempted"])
+        solve_count = stats["solved"]
+        base_h = MIN_HALF_LIFE * (2 ** (solve_count / 5))
+        rate_factor = 0.5 + solve_rate
+        half_life = min(MAX_HALF_LIFE, base_h * rate_factor)
+        half_lives[topic] = round(half_life, 3)
+
+    return half_lives
+
+def calculate_performance(verdict, hints_taken, submission_count, normalised_score):
+    """
+    Returns performance score between 0.0 and 1.0.
+    """
+    if verdict == "OK":
+        hint_factor = max(0.4, 1 - (hints_taken / 10))
+        attempt_factor = max(0.5, 1 - ((submission_count - 1) / 10))
+        performance = normalised_score * hint_factor * attempt_factor
+    else:
+        performance = max(0.0, normalised_score) * 0.3
+
+    return round(min(1.0, max(0.0, performance)), 4)
+
+def recall_probability(half_life, days_since_review):
+    """
+    Calculate probability user still remembers topic.
+    At t=0: p=1.0, at t=half_life: p=0.5
+    """
+    if days_since_review <= 0:
+        return 1.0
+    return round(2 ** (-days_since_review / half_life), 4)
+
+def update_half_life(current_half_life, performance, days_since_review):
+    """
+    Update half life based on performance.
+    Good performance increases half life.
+    Poor performance decreases half life.
+    """
+    theta = 0.5
+    scale = 2 ** (performance - theta)
+
+    if days_since_review > 0:
+        retention = recall_probability(current_half_life, days_since_review)
+        if retention > 0.5 and performance > 0.6:
+            scale *= 1.2
+
+    new_half_life = current_half_life * scale
+    new_half_life = max(MIN_HALF_LIFE, min(MAX_HALF_LIFE, new_half_life))
+    return round(new_half_life, 3)
+
+
+def calculate_urgency(hlr_state, current_timestamp):
+    """
+    Calculate urgency score for ranking engine.
+    Low recall = high urgency = topic needs review soon.
+    Returns value between 0.0 and 1.0.
+    """
+    last_review = hlr_state.get("last_review")
+    half_life = hlr_state.get("half_life", MIN_HALF_LIFE)
+
+    if last_review is None:
+        return 0.5
+
+    last_review_dt = datetime.fromisoformat(last_review)
+    if last_review_dt.tzinfo is None:
+     last_review_dt = last_review_dt.replace(tzinfo=timezone.utc)
+    now_dt = datetime.fromtimestamp(current_timestamp, tz=timezone.utc)
+    days_since = (now_dt - last_review_dt).total_seconds() / 86400
+
+    p_recall = recall_probability(half_life, days_since)
+    urgency = 1.0 - p_recall
+
+    if p_recall < RECALL_THRESHOLD:
+        urgency = min(1.0, urgency * 1.5)
+
+    return round(urgency, 4)
+
+def process_hlr(submission, user_hlr_state):
+    """
+    Process a submission and update HLR state for all related topics.
+
+    Args:
+        submission: dict with userId, problemId, verdict, hintsUsed,
+                    submissionCount, normalisedScore, timestamp
+        user_hlr_state: dict of {topic_slug: hlr_state} for this user
+
+    Returns:
+        updated_hlr_state, results
+    """
+    problem_id = submission["problemId"]
+    topics = problem_to_topics.get(problem_id, [])
+
+    if not topics:
+        return user_hlr_state, []
+
+    performance = calculate_performance(
+        verdict=submission["verdict"],
+        hints_taken=submission.get("hintsUsed", 0),
+        submission_count=submission.get("submissionCount", 1),
+        normalised_score=submission.get("normalisedScore", 0.0)
+    )
+
+    current_time = submission.get("timestamp", datetime.now(timezone.utc).timestamp())
+    now_dt = datetime.fromtimestamp(current_time, tz=timezone.utc)
+
+    updated_state = dict(user_hlr_state)
+    results = []
+
+    for topic in topics:
+        current_state = user_hlr_state.get(topic, {})
+        current_half_life = current_state.get("half_life", MIN_HALF_LIFE)
+        last_review = current_state.get("last_review")
+
+        if last_review:
+            last_review_dt = datetime.fromisoformat(last_review)
+            if last_review_dt.tzinfo is None:
+               last_review_dt = last_review_dt.replace(tzinfo=timezone.utc)
+            days_since = (now_dt - last_review_dt).total_seconds() / 86400
+        else:
+            days_since = 0
+
+        new_half_life = update_half_life(current_half_life, performance, days_since)
+        p_recall = recall_probability(new_half_life, days_since)
+        next_review_days = round(-new_half_life * math.log2(0.7), 1)
+
+        new_state = {
+            "half_life": new_half_life,
+            "last_review": now_dt.isoformat(),
+            "performance": performance,
+            "p_recall": p_recall,
+            "next_review_days": next_review_days
+        }
+
+        updated_state[topic] = new_state
+        results.append({
+            "topic": topic,
+            "performance": performance,
+            "previous_half_life": current_half_life,
+            "new_half_life": new_half_life,
+            "p_recall": p_recall,
+            "next_review_days": next_review_days
+        })
+
+    return updated_state, results
+

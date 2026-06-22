@@ -26,7 +26,7 @@ def get_last_attempted_topic(user_id, backend_url):
         if topics:
             return topics[0].get("topicId")
         return None
-    except:
+    except Exception:
         return None
 
 def handle_get_candidates(topic, min_difficulty, max_difficulty, limit):

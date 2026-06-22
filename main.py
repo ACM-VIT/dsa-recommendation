@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3001")
 
 from fastapi import FastAPI
 from routes.submission import router as submission_router

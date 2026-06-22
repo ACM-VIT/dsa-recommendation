@@ -35,7 +35,18 @@ def get_user_hlr(user_id: str) -> dict:
             cur.execute(
                 "SELECT topic_id, half_life, last_review, p_recall, next_review_days FROM user_hlr_state WHERE user_id = %s",
                 (user_id,)
+
             )
+            rows = cur.fetchall()
+            return {
+                row["topic_id"]: {
+                    "half_life": row["half_life"],
+                    "last_review": str(row["last_review"]),
+                    "p_recall": row["p_recall"],
+                    "next_review_days": row["next_review_days"]
+                }
+                for row in rows
+            }
 
 def save_user_hlr(user_id: str, hlr_state: dict):
     with get_connection() as conn:

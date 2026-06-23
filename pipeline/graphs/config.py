@@ -101,10 +101,12 @@ OUTPUT_PARQUET = _p("RGCN_OUTPUT_PARQUET", "data", "vector_pool", "vector_pool_r
 # Qdrant
 # ---------------------------------------------------------------------------
 
-QDRANT_URL              = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_API_KEY          = os.getenv("QDRANT_API_KEY", None)
-QDRANT_COLLECTION_RGCN  = os.getenv("QDRANT_COLLECTION_RGCN", "problems_rgcn")
-QDRANT_COLLECTION_FULL  = os.getenv("QDRANT_COLLECTION_FULL", "problems_full")
+QDRANT_URL                  = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_API_KEY              = os.getenv("QDRANT_API_KEY", None)
+QDRANT_COLLECTION_RGCN      = os.getenv("QDRANT_COLLECTION_RGCN",     "problems_rgcn")
+QDRANT_COLLECTION_FULL      = os.getenv("QDRANT_COLLECTION_FULL",     "problems_full")
+QDRANT_COLLECTION_QUESTION  = os.getenv("QDRANT_COLLECTION_QUESTION", "problems_question")
+QDRANT_COLLECTION_SOLUTION  = os.getenv("QDRANT_COLLECTION_SOLUTION", "problems_solution")
 
 
 # ---------------------------------------------------------------------------

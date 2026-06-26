@@ -8,8 +8,9 @@ load_dotenv()
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_connection():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL environment variable is not set")
     return psycopg2.connect(DATABASE_URL)
-
 def get_user_mastery(user_id: str) -> dict:
     conn = get_connection()
     try:
@@ -49,10 +50,10 @@ def get_user_hlr(user_id: str) -> dict:
             rows = cur.fetchall()
             return {
                 row["topic_id"]: {
-                    "half_life": float(row["half_life"]),
-                    "last_review": str(row["last_review"]),
-                    "p_recall": float(row["p_recall"]),
-                    "next_review_days": float(row["next_review_days"])
+                    "half_life": float(row["half_life"]) if row["half_life"] is not None else 1.0,
+                    "last_review": str(row["last_review"]) if row["last_review"] is not None else None,
+                    "p_recall": float(row["p_recall"]) if row["p_recall"] is not None else 0.5,
+                    "next_review_days": float(row["next_review_days"]) if row["next_review_days"] is not None else 1.0
                 }
                 for row in rows
             }

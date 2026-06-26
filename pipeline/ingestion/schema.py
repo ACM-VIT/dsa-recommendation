@@ -80,11 +80,11 @@ RELATIONAL_COLUMNS = [
 #   Note  : None until rgcn_embedding exists
 #
 EMBEDDING_COLUMNS = [
-    "question_embedding",           # 768-dim  | BAAI/bge-large-en-v1.5
+    "question_embedding",           # 1024-dim | BAAI/bge-large-en-v1.5
     "solution_embedding",           # 768-dim  | microsoft/graphcodebert-base
-    "rgcn_embedding",               # TBD      | RGCN (future)
-    "question_solution_embedding",  # 1536-dim | concat(Q, S)
-    "full_embedding",               # TBD      | concat(Q, S, RGCN)
+    "rgcn_embedding",               # 128-dim  | RGCN (pipeline/graphs/)
+    "question_solution_embedding",  # 1792-dim | concat(Q 1024 + S 768), L2-normed
+    "full_embedding",               # 1920-dim | concat(QS 1792 + RGCN 128), L2-normed
 ]
 
 # ── Final ordered column list (this is the DataFrame column order) ───────────

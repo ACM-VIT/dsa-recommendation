@@ -44,7 +44,23 @@ def ingest_embeddings(client, collection, ids, vectors, payloads, batch_size=128
     from qdrant_client.models import (
         Distance, VectorParams, PointStruct, OptimizersConfigDiff,
     )
-    valid = [(i, v) for i, v in enumerate(vectors) if v is not None]
+    # Build (qdrant_point_id, vector) pairs using a stable integer derived from
+    # the problem_id string — NOT from enumerate() position. Using enumerate()
+    # was the original bug: if the None-filtered subsets differ across collections
+    # (e.g. problems_question has fewer non-None vectors than problems_rgcn),
+    # the same problem ends up with different point IDs in each collection,
+    # making cross-collection lookups by ID impossible.
+    def _stable_id(problem_id: str) -> int:
+        # Deterministic 63-bit int from problem_id string — collision-free in practice
+        # for datasets under ~1M problems.
+        import hashlib
+        return int(hashlib.sha256(str(problem_id).encode()).hexdigest(), 16) % (2 ** 63)
+
+    valid = [
+        (_stable_id(ids[i]), v)
+        for i, v in enumerate(vectors)
+        if v is not None
+    ]
     if not valid:
         print(f"[X] nothing to ingest into '{collection}' (all vectors None)")
         return
@@ -63,8 +79,8 @@ def ingest_embeddings(client, collection, ids, vectors, payloads, batch_size=128
         print(f"[->] '{collection}' exists -- upserting")
 
     points = [
-        PointStruct(id=i, vector=list(map(float, v)), payload=payloads[i])
-        for i, v in valid
+        PointStruct(id=pt_id, vector=list(map(float, v)), payload=payloads[orig_i])
+        for orig_i, (pt_id, v) in enumerate(valid)
     ]
     t0 = time.time()
     for start in range(0, len(points), batch_size):

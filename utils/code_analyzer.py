@@ -164,7 +164,6 @@ def extract_dfg_features(code: str) -> Dict[str, int]:
     Returns dict of {feature: 0_or_1}.
     """
     features = {}
-    code_lower = code.lower()
 
     for ds_name, patterns in _DATA_STRUCTURE_PATTERNS.items():
         hit = 0

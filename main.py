@@ -1,3 +1,8 @@
+from dotenv import load_dotenv
+import os
+load_dotenv()
+
+
 from fastapi import FastAPI
 from routes.submission import router as submission_router
 from routes.mastery import router as mastery_router

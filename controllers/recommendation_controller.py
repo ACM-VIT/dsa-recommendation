@@ -20,7 +20,7 @@ with open(os.path.join(BASE_DIR, "data", "topic_topic_edges_normalized.json"), e
 
 def get_last_attempted_topic(user_id, backend_url):
     try:
-        response = requests.get(f"{backend_url}/user/{user_id}/last_attempted")
+        response = requests.get(f"{backend_url}/user/{user_id}/last_attempted", timeout=2)
         data = response.json()
         topics = data.get("topics", [])
         if topics:
@@ -84,7 +84,7 @@ def handle_recommend(user_id, limit):
     ) if mastery and any(t != urgent_topic for t in mastery.keys()) else None
 
     current_topic = get_last_attempted_topic(user_id, BACKEND_URL)
-    if current_topic == urgent_topic or current_topic == weak_topic:
+    if current_topic not in topic_scores or current_topic == urgent_topic or current_topic == weak_topic:
         current_topic = None
     if not current_topic:
         remaining = [t for t in topic_scores if t != urgent_topic and t != weak_topic]

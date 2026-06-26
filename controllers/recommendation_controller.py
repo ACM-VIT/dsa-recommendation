@@ -17,7 +17,7 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 with open(os.path.join(BASE_DIR, "data", "topic_topic_edges_normalized.json"), encoding="utf-8-sig") as f:
     tt_edges = json.load(f)
 
-def get_last_attempted_topic(user_id, backend_url):
+def get_last_attempted_topic(user_id):
     backend_url = os.environ.get("BACKEND_URL", "http://localhost:3001")
     try:
         response = requests.get(f"{backend_url}/user/{user_id}/last_attempted", timeout=2)
@@ -83,7 +83,7 @@ def handle_recommend(user_id, limit):
         key=lambda t: mastery[t]
     ) if mastery and any(t != urgent_topic for t in mastery.keys()) else None
 
-    current_topic = get_last_attempted_topic(user_id, None)
+    current_topic = get_last_attempted_topic(user_id)
     if current_topic not in topic_scores or current_topic == urgent_topic or current_topic == weak_topic:
         current_topic = None
     if not current_topic:
@@ -144,5 +144,4 @@ def handle_recommend(user_id, limit):
         },
         "recommended": ranked[0] if ranked else None,
         "all_candidates_ranked": ranked[:limit]
-
     }

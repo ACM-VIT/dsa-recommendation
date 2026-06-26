@@ -20,7 +20,10 @@ def get_user_mastery(user_id: str) -> dict:
                 (user_id,)
             )
             rows = cur.fetchall()
-            return {row["topic_id"]: float(row["mastery_score"]) for row in rows}
+            return {
+              row["topic_id"]: float(row["mastery_score"]) if row["mastery_score"] is not None else 0.0
+              for row in rows
+            }
     finally:
         conn.close()
 
@@ -33,7 +36,7 @@ def save_user_mastery(user_id: str, mastery: dict):
                     INSERT INTO user_topic_mastery (user_id, topic_id, mastery_score, updated_at)
                     VALUES (%s, %s, %s, NOW())
                     ON CONFLICT (user_id, topic_id)
-                    DO UPDATE SET mastery_score = EXCLUDED.mastery_score, updated_at = NOW()
+                    DO UPDATE SET mastery_score = EXCLUDED.mastery_score, updated_at = CASE WHEN user_topic_mastery.mastery_score IS DISTINCT FROM EXCLUDED.mastery_score THEN NOW() ELSE user_topic_mastery.updated_at END
                 """, (user_id, topic_id, mastery_score))
         conn.commit()
     finally:

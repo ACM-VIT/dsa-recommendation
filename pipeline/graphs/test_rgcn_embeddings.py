@@ -29,24 +29,20 @@ NOTE: This is a CLI evaluator, not a pytest module.
 """
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Path fix: ensure `import config` resolves to pipeline/graphs/config.py
-# regardless of whether this script is run from the repo root or its own dir.
-# ---------------------------------------------------------------------------
-import sys
-from pathlib import Path
-_THIS_DIR = Path(__file__).resolve().parent
-if str(_THIS_DIR) not in sys.path:
-    sys.path.insert(0, str(_THIS_DIR))
-
-from __future__ import annotations
-
 import argparse
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+
+# ---------------------------------------------------------------------------
+# Path fix: ensure `import config` resolves to pipeline/graphs/config.py
+# regardless of whether this script is run from the repo root or its own dir.
+# ---------------------------------------------------------------------------
+_THIS_DIR = Path(__file__).resolve().parent
+if str(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIS_DIR))
 
 import config as C
 
@@ -118,10 +114,13 @@ def _hits_at_k(client, collection, points, k, tag_key):
         for rank, r in enumerate(results, 1):
             if set(_tag(r, tag_key)) & query_tags:
                 hits += 1
-                if mrr_sum == 0 or True:  # first hit per query for MRR
-                    mrr_sum += 1.0 / rank
+                # MRR uses only the FIRST hit per query (standard definition).
+                # The `break` below is what enforces this -- once we add
+                # 1/rank to mrr_sum we stop scanning this query's results,
+                # so this branch runs at most once per query by construction.
+                mrr_sum += 1.0 / rank
                 dcg += 1.0 / np.log2(rank + 1)
-                break  # MRR = first hit only
+                break
         ndcg_sum += dcg / max(ideal_dcg, 1e-9)
         n += 1
     if n == 0:

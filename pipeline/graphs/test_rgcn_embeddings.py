@@ -18,12 +18,26 @@ Baselines compared automatically when the raw embedder collection is available:
   * rgcn_embedding             (128-d)
   * full_embedding             (1920-d)
 
-Run:
-    python test_rgcn_embeddings.py
-    python test_rgcn_embeddings.py --verbose
-    python test_rgcn_embeddings.py --url http://localhost:6333
-    python test_rgcn_embeddings.py --skip-baselines    # skip raw BGE comparison
+Run (from dsa-recommendation/ root OR from pipeline/graphs/):
+    python pipeline/graphs/test_rgcn_embeddings.py
+    python pipeline/graphs/test_rgcn_embeddings.py --verbose
+    python pipeline/graphs/test_rgcn_embeddings.py --url http://localhost:6333
+    python pipeline/graphs/test_rgcn_embeddings.py --skip-baselines
+
+NOTE: This is a CLI evaluator, not a pytest module.
+      conftest.py adds it to collect_ignore so pytest skips it automatically.
 """
+from __future__ import annotations
+
+# ---------------------------------------------------------------------------
+# Path fix: ensure `import config` resolves to pipeline/graphs/config.py
+# regardless of whether this script is run from the repo root or its own dir.
+# ---------------------------------------------------------------------------
+import sys
+from pathlib import Path
+_THIS_DIR = Path(__file__).resolve().parent
+if str(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIS_DIR))
 
 from __future__ import annotations
 
@@ -34,14 +48,6 @@ from pathlib import Path
 
 import numpy as np
 
-# CLI evaluator — not a pytest module (excluded via conftest.py)
-# Run: python pipeline/graphs/test_rgcn_embeddings.py
-import sys
-from pathlib import Path
-# Ensure pipeline/graphs/ is on path when invoked from repo root
-_HERE = Path(__file__).parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
 import config as C
 
 RGCN_DIM = C.OUT_DIM
@@ -247,14 +253,48 @@ def test_topic_separation(client, collection, points, verbose=False):
 
 def test_graph_preservation(collection, points):
     print(f"\n── 4. Graph Preservation  ({collection}) ──────────────────────")
-    if not C.GRAPH_PATH.exists():
-        print("  [SKIP]  graph.pt not found")
+
+    _npz_path  = C.ARTIFACTS_DIR / "graph_tensors.npz"
+    _meta_path = C.ARTIFACTS_DIR / "graph_meta.json"
+    uses = None
+    ids  = None
+
+    if _npz_path.exists() and _meta_path.exists():
+        # Preferred: safe numpy + JSON, no pickle. Matches what
+        # build_graph.py / train_rgcn.py / ingest_rgcn_to_qdrant.py write.
+        try:
+            import json as _json
+            _t = np.load(_npz_path, allow_pickle=False)
+            _m = _json.load(open(_meta_path, encoding="utf-8"))
+            uses_src = _t["uses_src"]
+            uses_dst = _t["uses_dst"]
+            uses = np.stack([uses_src, uses_dst])   # shape (2, E), matches graph["relations"]["uses"][2]
+            ids  = _m["problem_ids"]
+        except Exception as exc:
+            print(f"  [SKIP]  failed to read safe graph artifacts: {exc}")
+            return True, {}
+    elif C.GRAPH_PATH.exists():
+        # Fallback: legacy pickle .pt -- only used if safe artifacts are absent
+        import warnings
+        warnings.warn(
+            "graph_tensors.npz not found; falling back to graph.pt (pickle). "
+            "Run build_graph.py to regenerate the safe format.",
+            UserWarning, stacklevel=2,
+        )
+        try:
+            import torch
+            graph = torch.load(C.GRAPH_PATH, weights_only=False)
+            uses_t = graph["relations"]["uses"][2]   # (2, E) tensor
+            uses = uses_t.numpy() if hasattr(uses_t, "numpy") else np.asarray(uses_t)
+            ids  = graph["problem_ids"]
+        except Exception as exc:
+            print(f"  [SKIP]  failed to read graph.pt: {exc}")
+            return True, {}
+    else:
+        print("  [SKIP]  neither graph_tensors.npz nor graph.pt found")
         return True, {}
+
     try:
-        import torch
-        graph = torch.load(C.GRAPH_PATH, weights_only=False)
-        uses = graph["relations"]["uses"][2]   # (2, E)
-        ids = graph["problem_ids"]
         # For well-trained RGCN: problems sharing concepts should be more similar
         # than random pairs. Sample 300 concept-connected pairs vs 300 random pairs.
         rng = np.random.default_rng(42)
@@ -367,13 +407,32 @@ def test_sanity(client, rgcn_col, full_col, verbose):
     rgcn_cnt = client.count(collection_name=rgcn_col).count
     results.append(_r(rgcn_cnt == full_cnt, f"point counts match   : {rgcn_cnt}=={full_cnt}"))
 
-    # artifacts
-    for path, label in [(C.GRAPH_PATH, "graph.pt"),
-                         (C.MODEL_PATH, "rgcn_model.pt"),
-                         (C.EMB_NPY,    "rgcn_problem_embeddings.npy"),
-                         (C.CONCEPT_INDEX, "concept_index.json")]:
+    # artifacts -- check the SAFE (pickle-free) artifact set as the
+    # required pair, since build_graph.py/train_rgcn.py now write these
+    # and .gitignore excludes *.pt. graph.pt / rgcn_model.pt are optional
+    # legacy fallbacks; their absence should not fail a clean pickle-free run.
+    _npz_path  = C.ARTIFACTS_DIR / "graph_tensors.npz"
+    _meta_path = C.ARTIFACTS_DIR / "graph_meta.json"
+    _arch_path = C.ARTIFACTS_DIR / "model_arch.json"
+
+    required_artifacts = [
+        (_npz_path,        "graph_tensors.npz"),
+        (_meta_path,       "graph_meta.json"),
+        (C.EMB_NPY,        "rgcn_problem_embeddings.npy"),
+        (C.CONCEPT_INDEX,  "concept_index.json"),
+        (_arch_path,       "model_arch.json"),
+    ]
+    for path, label in required_artifacts:
         ok = path.exists() and path.stat().st_size > 0
         results.append(_r(ok, f"{label:<38} {'found' if ok else 'MISSING'}"))
+
+    # legacy pickle artifacts -- optional, report but never fail the suite on them
+    for path, label in [(C.GRAPH_PATH, "graph.pt (legacy, optional)"),
+                         (C.MODEL_PATH, "rgcn_model.pt (legacy, optional)")]:
+        present = path.exists() and path.stat().st_size > 0
+        tag = "found" if present else "absent (ok -- using safe artifacts)"
+        print(f"  [INFO]  {label:<38} {tag}")
+
     if C.EMB_NPY.exists():
         arr = np.load(C.EMB_NPY)
         results.append(_r(arr.ndim == 2 and arr.shape[1] == RGCN_DIM,

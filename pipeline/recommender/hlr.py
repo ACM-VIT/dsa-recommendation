@@ -155,7 +155,17 @@ def process_hlr(submission, user_hlr_state):
             days_since = 0
 
         new_half_life = update_half_life(current_half_life, performance, days_since)
-        p_recall = recall_probability(new_half_life, 0)
+
+        # p_recall here is the recall probability JUST BEFORE this submission,
+        # i.e. how much the user had forgotten since their last review of this
+        # topic -- using current_half_life (pre-update) and days_since (actual
+        # elapsed time). This is what makes p_recall meaningful and varying:
+        # it reflects how urgently this review was needed, not a post-hoc
+        # constant. Calling recall_probability(new_half_life, 0) here was the
+        # bug -- with days_since_review=0 it always returns 1.0 regardless of
+        # half_life, so every stored p_recall was identically 1.0.
+        p_recall = recall_probability(current_half_life, days_since)
+
         next_review_days = round(-new_half_life * math.log2(0.7), 1)
 
         new_state = {
@@ -177,5 +187,3 @@ def process_hlr(submission, user_hlr_state):
         })
 
     return updated_state, results
-
-

@@ -219,11 +219,18 @@ def check_cross_topic_transfer(client: QdrantClient, collection: str, df: pd.Dat
 
 def check_random_probe(client: QdrantClient, collection: str, df: pd.DataFrame, vector_col: str, expected_dim: int = None):
     print("\n" + "="*55)
-    print("  TEST 6 -- Random Vector Probe (10 random points)")
+    n_probe = min(10, len(df))
+    print(f"  TEST 6 -- Random Vector Probe ({n_probe} random points)")
     print("="*55)
 
-    rng = np.random.default_rng(42)
-    sample = df.sample(10, random_state=42)
+    if n_probe == 0:
+        print("  [SKIP] parquet is empty")
+        return
+
+    # Clamp to len(df) -- df.sample(10) crashes with
+    # "Cannot take a larger sample than population when 'replace=False'"
+    # on small dev/sample parquets with fewer than 10 rows.
+    sample = df.sample(n_probe, random_state=42)
 
     for _, row in sample.iterrows():
         vec = row[vector_col]
@@ -236,7 +243,7 @@ def check_random_probe(client: QdrantClient, collection: str, df: pd.DataFrame, 
         assert not np.all(arr == 0), f"Zero vector for {row['title']}"
 
     dim_label = f"{expected_dim}-dim" if expected_dim else "consistent-dim"
-    print(f"  10 random vectors: all {dim_label}, no NaN, no zeros")
+    print(f"  {n_probe} random vectors: all {dim_label}, no NaN, no zeros")
     print("  [PASS]")
 
 

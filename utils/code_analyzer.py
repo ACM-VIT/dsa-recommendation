@@ -47,14 +47,33 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 def _get_parser():
-    """Lazy-load tree-sitter parser. Returns None if not installed."""
+    """
+    Lazy-load tree-sitter parser. Returns None if not installed.
+
+    tree-sitter's Python API changed across versions:
+      old (<0.22):  Parser(language)
+      new (>=0.22): Parser(); parser.language = language
+    We try the new API first (current PyPI default) and fall back to the
+    old constructor signature so this works regardless of installed version.
+    """
     try:
         import tree_sitter_python as tspython
         from tree_sitter import Language, Parser
         lang = Language(tspython.language())
-        parser = Parser(lang)
+        try:
+            parser = Parser(lang)              # old API: language via constructor
+        except TypeError:
+            parser = Parser()                  # new API: language via attribute
+            parser.language = lang
         return parser
     except ImportError:
+        return None
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "tree-sitter parser init failed (%s) -- falling back to raw code "
+            "for solution embeddings. AST/CFG/DFG/PDG enrichment disabled.",
+            exc)
         return None
 
 _parser = None
@@ -434,7 +453,7 @@ class Solution:
     print(f"Feature vector shape : {features.shape}")
     print(f"Non-zero features    : {(features > 0).sum()}")
     print(f"Feature range        : [{features.min():.3f}, {features.max():.3f}]")
+
     enriched = build_semantic_text(test_code)
-    
     print(f"\nEnriched text for GraphCodeBERT:")
     print(enriched)

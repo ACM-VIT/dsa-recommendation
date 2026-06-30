@@ -275,12 +275,22 @@ def build_graph() -> dict:
                 safe[k] = [x for x in v if isinstance(x, (str, int, float, bool))]
         _safe_meta.append(safe)
 
+    # Content fingerprint: hash of the sorted problem_id list. train_rgcn.py
+    # writes this same hash into model_arch.json; ingest_rgcn_to_qdrant.py
+    # checks both match before writing to Qdrant, catching the case where
+    # row counts coincidentally match but the underlying problem set changed.
+    import hashlib as _hashlib
+    _graph_fingerprint = _hashlib.sha256(
+        "|".join(sorted(prob_ids)).encode()
+    ).hexdigest()[:16]
+
     _json.dump({
         "problem_ids":   prob_ids,
         "problem_slugs": prob_slugs,
         "problem_meta":  _safe_meta,
         "concepts":      concepts,
         "num_nodes":     {"problem": n_problems, "concept": n_concepts},
+        "graph_fingerprint": _graph_fingerprint,
         "meta": {
             "problem_feat_dim":  int(feat_dim),
             "concept_feat_dim":  int(X_concept.shape[1]),

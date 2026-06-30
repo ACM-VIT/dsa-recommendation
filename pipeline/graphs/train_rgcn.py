@@ -54,9 +54,19 @@ def seed_everything(seed: int) -> None:
 
 
 def split_edges(index, val_frac, seed):
+    """
+    Split edges into (train, val). Guarantees train is never empty:
+    if a relation has only 1-2 edges, val gets 0 and everything goes to train
+    rather than risking an empty positive batch -> NaN in BCE loss.
+    """
     e = index.shape[1]
+    if e == 0:
+        empty = index[:, :0]
+        return empty, empty
     perm = torch.randperm(e, generator=torch.Generator().manual_seed(seed))
-    n_val = max(1, int(e * val_frac))
+    # only reserve a validation edge if there are enough edges that
+    # training still has at least 1 left over
+    n_val = min(max(1, int(e * val_frac)), e - 1) if e > 1 else 0
     return index[:, perm[n_val:]], index[:, perm[:n_val]]
 
 
@@ -178,9 +188,6 @@ def train():
     device = torch.device(C.resolve_device())
     print(f"[->] device = {device}")
 
-    if not C.GRAPH_PATH.exists():
-        raise FileNotFoundError(f"{C.GRAPH_PATH} not found -- run build_graph.py first.")
-
     # ── Load graph from safe npz + json (no pickle) ──────────────────────────
     _npz_path  = C.ARTIFACTS_DIR / "graph_tensors.npz"
     _meta_path = C.ARTIFACTS_DIR / "graph_meta.json"
@@ -215,9 +222,14 @@ def train():
             "problem_features": X_prob,
             "concepts":         _m["concepts"],
             "meta":             _m["meta"],
+            "graph_fingerprint": _m.get("graph_fingerprint"),
         }
     else:
         # Fallback: legacy .pt — only safe if you built it yourself locally
+        if not C.GRAPH_PATH.exists():
+            raise FileNotFoundError(
+                f"Neither {_npz_path} (safe) nor {C.GRAPH_PATH} (legacy) found -- "
+                f"run build_graph.py first.")
         import warnings
         warnings.warn(
             "graph_tensors.npz not found; falling back to graph.pt (pickle). "
@@ -271,13 +283,17 @@ def train():
 
         # ---- auxiliary: light link prediction for graph structure ----
         link = z["problem"].new_tensor(0.0)
+        n_scored = 0
         for r, (st, dt, tr, _v, pos_set, n_dst) in rel_data.items():
+            if tr.shape[1] == 0:
+                continue   # this relation's training split is empty -- skip
             pos = decoder(z[st], z[dt], tr[0], tr[1], r)
             ns, nd = sample_neg(tr[0], n_dst, C.NEG_PER_POS, pos_set, device)
             neg = decoder(z[st], z[dt], ns, nd, r)
             logits = torch.cat([pos, neg]); lab = torch.cat([torch.ones_like(pos), torch.zeros_like(neg)])
             link = link + F.binary_cross_entropy_with_logits(logits, lab)
-        link = link / max(len(rel_data), 1)
+            n_scored += 1
+        link = link / max(n_scored, 1)
 
         loss = SUPCON_W * sc + LINK_W * link
 
@@ -337,6 +353,8 @@ def train():
         "decoder": decoder.state_dict(),
     }, C.MODEL_PATH)
     # Architecture metadata saved as JSON (no pickle, human-readable)
+    # graph_fingerprint propagates from graph_meta.json so ingest_rgcn_to_qdrant.py
+    # can detect a stale combination of npz/npy from different graph builds.
     _arch_path = C.ARTIFACTS_DIR / "model_arch.json"
     json.dump({
         "in_dims":      in_dims,
@@ -346,6 +364,7 @@ def train():
         "out":          C.OUT_DIM,
         "best_cluster": best,
         "final_cluster": final_clus,
+        "graph_fingerprint": graph.get("graph_fingerprint"),
     }, open(_arch_path, "w", encoding="utf-8"), indent=2)
     print(f"[OK] embeddings -> {C.EMB_NPY}  shape={prob_emb.shape}")
     print(f"[OK] model      -> {C.MODEL_PATH}  (weights only, safe)")

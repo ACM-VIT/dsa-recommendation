@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -160,14 +161,26 @@ def build_vector_pool(records: List[Dict[str, Any]]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _to_json_safe(df: pd.DataFrame) -> List[Dict]:
-    """Convert DataFrame to JSON-safe list, handling None and lists correctly."""
+    """Convert DataFrame to JSON-safe list, handling None, lists, and
+    numpy arrays (embedding columns) correctly.
+
+    pd.isna() on a numpy array returns an array of bools, not a scalar,
+    which makes `if ... pd.isna(val)` raise "truth value of an array is
+    ambiguous". Embedding columns (question_embedding etc.) hold ndarrays
+    once populated, so this path is hit on every run after the embedder
+    has filled those columns in -- must check ndarray BEFORE calling isna.
+    """
     rows = []
     for _, row in df.iterrows():
         r = {}
         for col in df.columns:
             val = row[col]
-            # pandas NA -> None
-            if val is None or (not isinstance(val, (list, bool)) and pd.isna(val)):
+            if isinstance(val, np.ndarray):
+                # embedding vector -> JSON list, treat empty array as None
+                r[col] = val.tolist() if val.size > 0 else None
+            elif isinstance(val, (list, bool)):
+                r[col] = val
+            elif val is None or pd.isna(val):
                 r[col] = None
             else:
                 r[col] = val

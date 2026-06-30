@@ -77,7 +77,15 @@ def ingest_embeddings(client, collection, ids, vectors, payloads, batch_size=128
         )
         print(f"[OK] created '{collection}'")
     else:
-        print(f"[->] '{collection}' exists -- upserting")
+        existing_dim = client.get_collection(collection).config.params.vectors.size
+        if existing_dim != dim:
+            raise ValueError(
+                f"Collection '{collection}' already exists with dim={existing_dim} "
+                f"but you're trying to upsert dim={dim} vectors. "
+                f"Either delete the collection first (client.delete_collection"
+                f"('{collection}')) or fix RGCN_OUT_DIM / feature source so "
+                f"dims match. Refusing to upsert mismatched dimensions.")
+        print(f"[->] '{collection}' exists -- upserting (dim={dim} confirmed match)")
 
     pid_to_payload = {pid: payloads[i] for i, pid in enumerate(ids)}
     points = [
@@ -146,9 +154,10 @@ def from_artifacts_and_parquet():
     _npz_path  = C.ARTIFACTS_DIR / "graph_tensors.npz"
     _meta_path = C.ARTIFACTS_DIR / "graph_meta.json"
 
-    if not _npz_path.exists() or not C.EMB_NPY.exists():
+    missing = [p for p in (_npz_path, _meta_path, C.EMB_NPY) if not p.exists()]
+    if missing:
         raise FileNotFoundError(
-            f"Need {_npz_path} and {C.EMB_NPY} -- "
+            f"Missing required artifact(s): {[str(p) for p in missing]} -- "
             f"run build_graph.py + train_rgcn.py first.")
 
     import json as _json
@@ -158,6 +167,37 @@ def from_artifacts_and_parquet():
     ids  = _m["problem_ids"]
     meta = _m["problem_meta"]
     X_prob = _t["problem_features"].astype(np.float32)
+
+    # ── Alignment check: rgcn_problem_embeddings.npy must match graph_meta.json ──
+    # If the graph was rebuilt after the RGCN embeddings were trained (or vice
+    # versa), row counts can silently mismatch -- crash loudly here rather
+    # than writing a full vector paired with the wrong problem_id downstream.
+    if len(rgcn) != len(ids):
+        raise ValueError(
+            f"Stale artifacts: rgcn_problem_embeddings.npy has {len(rgcn)} rows "
+            f"but graph_meta.json has {len(ids)} problem_ids. "
+            f"Re-run build_graph.py then train_rgcn.py so both come from the "
+            f"same graph build (do not mix artifacts from different runs).")
+    if len(X_prob) != len(ids):
+        raise ValueError(
+            f"Stale artifacts: graph_tensors.npz problem_features has "
+            f"{len(X_prob)} rows but graph_meta.json has {len(ids)} problem_ids. "
+            f"Re-run build_graph.py to regenerate both files together.")
+
+    # Fingerprint check: catches the case where row counts coincidentally
+    # match but the underlying problem set is different (graph rebuilt with
+    # a different filter/dataset between build_graph.py and train_rgcn.py runs).
+    _arch_path = C.ARTIFACTS_DIR / "model_arch.json"
+    expected_fp = _m.get("graph_fingerprint")
+    if _arch_path.exists() and expected_fp:
+        _arch = _json.load(open(_arch_path, encoding="utf-8"))
+        trained_fp = _arch.get("graph_fingerprint")
+        if trained_fp and trained_fp != expected_fp:
+            raise ValueError(
+                f"Stale artifacts: rgcn_problem_embeddings.npy was trained on a "
+                f"different graph (fingerprint {trained_fp}) than the current "
+                f"graph_meta.json (fingerprint {expected_fp}). "
+                f"Re-run build_graph.py then train_rgcn.py together.")
 
     # build payloads
     payloads = []

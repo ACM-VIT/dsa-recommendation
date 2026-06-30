@@ -67,7 +67,7 @@ def main():
     print(C.summary())
 
     build_graph()
-    best_auc = train()
+    final_cluster = train()   # train() returns final topic-clustering score, not AUC
 
     if not args.skip_qdrant:
         try:
@@ -75,20 +75,17 @@ def main():
             import ingest_rgcn_to_qdrant as ing
             client = QdrantClient(url=C.QDRANT_URL, api_key=C.QDRANT_API_KEY, timeout=30)
             client.get_collections()
-            ids, rgcn, full, payloads = ing.from_artifacts()
-            ing.ingest_embeddings(client, C.QDRANT_COLLECTION_RGCN, ids, rgcn, payloads)
-            valid = [i for i, v in enumerate(full) if v is not None]
-            ing.ingest_embeddings(client, C.QDRANT_COLLECTION_FULL,
-                                  [ids[i] for i in valid], [full[i] for i in valid],
-                                  [payloads[i] for i in valid])
+            ids, payloads, vecs = ing.from_artifacts_and_parquet()
+            ing.ingest_embeddings(client, C.QDRANT_COLLECTION_RGCN, ids, vecs["rgcn"], payloads)
+            ing.ingest_embeddings(client, C.QDRANT_COLLECTION_FULL, ids, vecs["full"], payloads)
         except Exception as e:
             print(f"\n[!] Qdrant write skipped: {e.__class__.__name__}: {str(e)[:140]}")
-            print("    Re-run later:  python rgcn/ingest_rgcn_to_qdrant.py")
+            print("    Re-run later:  python pipeline/graphs/ingest_rgcn_to_qdrant.py")
     else:
-        print("\n[->] --skip-qdrant set; ingest later with rgcn/ingest_rgcn_to_qdrant.py")
+        print("\n[->] --skip-qdrant set; ingest later with pipeline/graphs/ingest_rgcn_to_qdrant.py")
 
     print("\n" + "#" * 62)
-    print(f"#  RGCN PIPELINE COMPLETE   best_val_auc={best_auc:.4f}")
+    print(f"#  RGCN PIPELINE COMPLETE   final_cluster={final_cluster:.4f}")
     print("#" * 62 + "\n")
 
 

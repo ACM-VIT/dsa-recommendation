@@ -431,7 +431,16 @@ def upload_to_qdrant(
         )
         print(f"[OK] Collection '{collection}' created")
     else:
-        print(f"[->] Collection '{collection}' exists -- upserting")
+        existing_dim = client.get_collection(collection).config.params.vectors.size
+        if existing_dim != vec_size:
+            raise ValueError(
+                f"Collection '{collection}' exists with dim={existing_dim} but "
+                f"you're uploading --qdrant-vector={embedding_col} which is "
+                f"dim={vec_size}. Use a different --collection name per vector "
+                f"type, or delete the existing collection first. "
+                f"Refusing to upsert mismatched dimensions.")
+        print(f"[->] Collection '{collection}' exists -- upserting "
+              f"(dim={vec_size} confirmed match)")
 
     points  = []
     skipped = 0

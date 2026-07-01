@@ -17,3 +17,21 @@ env/
 Thumbs.db
 .env
 qdrant_storage_v2/
+# ==========================
+# DSA Engine generated artifacts
+# ==========================
+
+# Vector pool outputs
+data/vector_pool/
+vector_pool/
+
+# RGCN outputs
+pipeline/graphs/rgcn_artifacts/
+
+# Generated binary files
+*.parquet
+*.pt
+*.npy
+*.npz
+*.pickle
+*.pkl

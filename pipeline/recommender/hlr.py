@@ -4,9 +4,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 # Load problem to topics mapping
-import os
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-with open(os.path.join(BASE_DIR, "data", "problem_topic_edges_normalized.json")) as f:
+with open("question-graph/data/problem_topic_edges_normalized.json") as f:
     pt_edges = json.load(f)
 
 problem_to_topics = defaultdict(list)
@@ -19,16 +17,44 @@ MASTERY_THRESHOLD = 0.75
 RECALL_THRESHOLD = 0.5
 
 
+def _parse_aware(iso_str):
+    """
+    Parse an ISO datetime string and guarantee a UTC-aware result.
+    Stored states or client payloads can arrive as either:
+        "2026-06-30T12:00:00+00:00"   (aware)
+        "2026-06-30T12:00:00"         (naive -- no timezone)
+    datetime.fromisoformat() on the naive form returns tzinfo=None, and
+    subtracting it from a UTC-aware "now" raises:
+        TypeError: can't subtract offset-naive and offset-aware datetimes
+    This wrapper normalises naive timestamps to UTC so every caller in
+    this module can safely subtract two datetimes without checking first.
+    """
+    dt = datetime.fromisoformat(iso_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _get_problem_id(sub):
+    """
+    Accept either snake_case (problem_id) or camelCase (problemId) keys.
+    process_hlr()'s documented submission schema uses problemId, but CF
+    history payloads / older callers may use problem_id. Checking only
+    one form means the other silently returns no topics and the user
+    gets no seeded half-life data at all.
+    """
+    return sub.get("problemId") or sub.get("problem_id")
+
+
 def seed_half_life_from_cf(cf_submissions, problem_to_topics):
     """
     Calculate initial half life per topic from CF history.
     Called once when user connects their CF account.
-    TODO: wire to /seed_hlr/{user_id} endpoint once CF API is available from backend.
     """
     topic_stats = defaultdict(lambda: {"solved": 0, "attempted": 0, "last_seen": None})
 
     for sub in cf_submissions:
-        problem_id = sub.get("problemId") or sub.get("problem_id")
+        problem_id = _get_problem_id(sub)
         topics = problem_to_topics.get(problem_id, [])
         for topic in topics:
             topic_stats[topic]["attempted"] += 1
@@ -88,7 +114,10 @@ def update_half_life(current_half_life, performance, days_since_review):
     new_half_life = max(MIN_HALF_LIFE, min(MAX_HALF_LIFE, new_half_life))
     return round(new_half_life, 3)
 
-
+# =============================================================================
+# URGENCY SCORE FOR RANKING
+# urgency = 1 - p(recall)
+# =============================================================================
 def calculate_urgency(hlr_state, current_timestamp):
     """
     Calculate urgency score for ranking engine.
@@ -101,9 +130,10 @@ def calculate_urgency(hlr_state, current_timestamp):
     if last_review is None:
         return 0.5
 
-    last_review_dt = datetime.fromisoformat(last_review)
-    if last_review_dt.tzinfo is None:
-     last_review_dt = last_review_dt.replace(tzinfo=timezone.utc)
+    # _parse_aware guarantees a UTC-aware datetime even if last_review
+    # was stored without timezone info -- fixes the naive/aware subtraction
+    # TypeError that previously crashed this function.
+    last_review_dt = _parse_aware(last_review)
     now_dt = datetime.fromtimestamp(current_timestamp, tz=timezone.utc)
     days_since = (now_dt - last_review_dt).total_seconds() / 86400
 
@@ -127,7 +157,7 @@ def process_hlr(submission, user_hlr_state):
     Returns:
         updated_hlr_state, results
     """
-    problem_id = submission["problemId"]
+    problem_id = _get_problem_id(submission)
     topics = problem_to_topics.get(problem_id, [])
 
     if not topics:
@@ -152,15 +182,24 @@ def process_hlr(submission, user_hlr_state):
         last_review = current_state.get("last_review")
 
         if last_review:
-            last_review_dt = datetime.fromisoformat(last_review)
-            if last_review_dt.tzinfo is None:
-               last_review_dt = last_review_dt.replace(tzinfo=timezone.utc)
+            # Same naive/aware fix as calculate_urgency() -- a stored
+            # last_review without timezone info would otherwise crash
+            # this subtraction on every subsequent submission for that
+            # user/topic, blocking ALL their future HLR updates.
+            last_review_dt = _parse_aware(last_review)
             days_since = (now_dt - last_review_dt).total_seconds() / 86400
         else:
             days_since = 0
 
         new_half_life = update_half_life(current_half_life, performance, days_since)
-        p_recall = recall_probability(new_half_life, days_since)
+
+        # p_recall reflects recall probability JUST BEFORE this submission
+        # (current_half_life + days_since, i.e. pre-update state) -- shows
+        # how urgently this review was needed. Using new_half_life with
+        # days_since_review=0 here would always return 1.0 regardless of
+        # half_life, making every stored p_recall an uninformative constant.
+        p_recall = recall_probability(current_half_life, days_since)
+
         next_review_days = round(-new_half_life * math.log2(0.7), 1)
 
         new_state = {
@@ -182,4 +221,3 @@ def process_hlr(submission, user_hlr_state):
         })
 
     return updated_state, results
-

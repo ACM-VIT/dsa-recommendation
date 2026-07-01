@@ -1,17 +1,15 @@
 import json
 from collections import defaultdict
 import numpy as np
-import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-with open(os.path.join(BASE_DIR, "data", "problem_topic_edges_normalized.json")) as f:
+with open("question-graph/data/problem_topic_edges_normalized.json") as f:
     pt_edges = json.load(f)
-problem_to_topics = defaultdict(list)
 
+problem_to_topics = defaultdict(list)
 for edge in pt_edges:
     problem_to_topics[edge["source"]].append(edge["target"])
+
+print(f"Loaded topic mappings for {len(problem_to_topics)} problems")
 
 BKT_PARAMS = {
     "P_T": 0.2,   # probability of learning after one attempt
@@ -30,6 +28,12 @@ DEFAULT_P_L = {
 
 # Mastery threshold — above this topic is considered mastered
 MASTERY_THRESHOLD = 0.75
+
+# Observed score below this is treated as a failed attempt -- the BKT
+# learning transition (P_T) is skipped for failures, since "learning from
+# a failed attempt" should not move mastery upward. Matches the original
+# intent of the `if observed >= 0.5` branch before it was dropped.
+LEARNING_TRANSITION_THRESHOLD = 0.5
 
 # STEP 3 — OBSERVED SCORE CALCULATION
 # Phase 1: weighted combination with default weights
@@ -109,11 +113,11 @@ def calculate_observed(verdict, hints_taken, test_cases_passed,
 def update_bkt(current_p_l, observed):
     """
     Update knowledge probability using Bayes theorem.
-    
+
     Args:
         current_p_l: current probability user knows this topic (0 to 1)
         observed: performance score from calculate_observed (0 to 1)
-    
+
     Returns:
         new_p_l: updated probability (0 to 1)
     """
@@ -134,11 +138,17 @@ def update_bkt(current_p_l, observed):
     # Blend using observed score as weight
     p_l_given_obs = observed * p_l_correct + (1 - observed) * p_l_wrong
 
-    # Account for learning from this attempt
-    if observed >= 0.5:
-     new_p_l = p_l_given_obs + (1 - p_l_given_obs) * P_T
+    # Account for learning from this attempt -- ONLY on a sufficiently
+    # successful observation. Applying the learning transition (P_T)
+    # unconditionally lets a fully failed attempt (observed=0.0) still
+    # push mastery upward, since (1 - p_l_given_obs) * P_T > 0 regardless
+    # of how bad the observation was. A failed attempt should not be
+    # treated as evidence of learning.
+    if observed >= LEARNING_TRANSITION_THRESHOLD:
+        new_p_l = p_l_given_obs + (1 - p_l_given_obs) * P_T
     else:
-     new_p_l = p_l_given_obs 
+        new_p_l = p_l_given_obs
+
     return round(min(1.0, max(0.0, new_p_l)), 4)
 
 def process_submission(submission, user_mastery):
@@ -198,4 +208,3 @@ def process_submission(submission, user_mastery):
         })
 
     return updated_mastery, mastered_topics, results
-

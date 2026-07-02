@@ -2,6 +2,7 @@
 
 import json
 import logging
+from io import StringIO
 
 from app.logging.logger import (
     ContextLoggerAdapter,
@@ -51,27 +52,34 @@ def test_logger_adapter_preserves_submission_id_authority() -> None:
 
 
 def test_json_formatter_outputs_flattened_fields() -> None:
-    """The formatter emits flattened structured fields at the top level."""
+    """A real logging call emits flattened fields at the top level."""
 
-    formatter = JsonFormatter()
-    record = logging.LogRecord(
-        name="test.logger",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="request completed",
-        args=(),
-        exc_info=None,
-    )
-    record.submission_id = "sub_123"
-    record.extra = {
-        "submission_id": "sub_override",
-        "request_id": "req_1",
-        "status_code": 200,
-        "duration_ms": 45,
-    }
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter())
+    logger = logging.getLogger("test.real_logging_path")
+    logger.handlers = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
 
-    payload = json.loads(formatter.format(record))
+    token = bind_submission_id("sub_123")
+    try:
+        adapter = ContextLoggerAdapter(logger, {})
+        adapter.info(
+            "request completed",
+            extra={
+                "submission_id": "sub_override",
+                "request_id": "req_1",
+                "status_code": 200,
+                "duration_ms": 45,
+            },
+        )
+    finally:
+        reset_submission_id(token)
+        logger.handlers = []
+        logger.propagate = True
+
+    payload = json.loads(stream.getvalue())
 
     assert payload["submission_id"] == "sub_123"
     assert payload["request_id"] == "req_1"

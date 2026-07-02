@@ -13,6 +13,18 @@ submission_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     default=None,
 )
 
+_STANDARD_LOG_RECORD_FIELDS = frozenset(
+    logging.LogRecord(
+        name="",
+        level=0,
+        pathname="",
+        lineno=0,
+        msg="",
+        args=(),
+        exc_info=None,
+    ).__dict__,
+)
+
 
 def _merge_log_fields(
     *,
@@ -24,6 +36,25 @@ def _merge_log_fields(
     merged_fields = dict(extra_fields or {})
     merged_fields["submission_id"] = submission_id
     return merged_fields
+
+
+def _structured_record_fields(record: logging.LogRecord) -> dict[str, Any]:
+    """Return fields added through logging's standard extra mechanism."""
+
+    fields = {
+        key: value
+        for key, value in record.__dict__.items()
+        if key not in _STANDARD_LOG_RECORD_FIELDS and key != "message"
+    }
+
+    legacy_extra = fields.pop("extra", None)
+    if isinstance(legacy_extra, dict):
+        fields.update(legacy_extra)
+
+    fields["submission_id"] = (
+        getattr(record, "submission_id", None) or submission_id_var.get()
+    )
+    return fields
 
 
 class JsonFormatter(logging.Formatter):
@@ -40,14 +71,7 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-        payload["submission_id"] = getattr(record, "submission_id", None) or submission_id_var.get()
-
-        extra = getattr(record, "extra", None)
-        if isinstance(extra, dict):
-            payload.update(extra)
-            payload["submission_id"] = (
-                getattr(record, "submission_id", None) or submission_id_var.get()
-            )
+        payload.update(_structured_record_fields(record))
 
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)

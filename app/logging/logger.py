@@ -14,6 +14,18 @@ submission_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 
+def _merge_log_fields(
+    *,
+    submission_id: str | None,
+    extra_fields: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Flatten structured fields while keeping submission_id authoritative."""
+
+    merged_fields = dict(extra_fields or {})
+    merged_fields["submission_id"] = submission_id
+    return merged_fields
+
+
 class JsonFormatter(logging.Formatter):
     """Format log records as JSON-compatible single-line dictionaries."""
 
@@ -27,12 +39,15 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
-            "submission_id": getattr(record, "submission_id", None) or submission_id_var.get(),
         }
+        payload["submission_id"] = getattr(record, "submission_id", None) or submission_id_var.get()
 
         extra = getattr(record, "extra", None)
         if isinstance(extra, dict):
             payload.update(extra)
+            payload["submission_id"] = (
+                getattr(record, "submission_id", None) or submission_id_var.get()
+            )
 
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
@@ -54,10 +69,10 @@ class ContextLoggerAdapter(logging.LoggerAdapter):
         if not isinstance(extra, dict):
             extra = {"extra_value": extra}
 
-        kwargs["extra"] = {
-            "submission_id": submission_id_var.get(),
-            "extra": extra,
-        }
+        kwargs["extra"] = _merge_log_fields(
+            submission_id=submission_id_var.get(),
+            extra_fields=extra,
+        )
         return msg, kwargs
 
 
@@ -94,4 +109,3 @@ def get_logger(name: str) -> ContextLoggerAdapter:
 
     configure_logging()
     return ContextLoggerAdapter(logging.getLogger(name), {})
-

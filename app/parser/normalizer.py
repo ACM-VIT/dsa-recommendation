@@ -79,6 +79,7 @@ def normalize(request: AnalyzeRequest) -> NormalizedSubmission:
     return NormalizedSubmission(
         submission_id=request.submission_id,
         problem_id=request.problem_id,
+        problem_statement=request.problem_statement.strip(),
         user_id=request.user_id,
         language=request.language,
         verdict=request.verdict,

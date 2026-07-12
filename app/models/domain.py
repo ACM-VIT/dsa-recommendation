@@ -44,6 +44,7 @@ class NormalizedSubmission(BaseModel):
 
     submission_id: str
     problem_id: str
+    problem_statement: str
     user_id: str
     language: str
     verdict: Verdict

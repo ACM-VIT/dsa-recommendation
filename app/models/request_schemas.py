@@ -47,6 +47,7 @@ class AnalyzeRequest(BaseModel):
 
     submission_id: str
     problem_id: str
+    problem_statement: str
     user_id: str
     language: str
     verdict: Verdict
@@ -72,6 +73,22 @@ class AnalyzeRequest(BaseModel):
         max_chars = get_settings().max_source_code_chars
         if len(value) > max_chars:
             msg = f"source_code exceeds maximum length of {max_chars} characters"
+            raise ValueError(msg)
+
+        return value
+
+    @field_validator("problem_statement")
+    @classmethod
+    def problem_statement_must_be_safe_size(cls, value: str) -> str:
+        """Ensure problem text is present and within configured limits."""
+
+        if not value.strip():
+            msg = "problem_statement must not be empty"
+            raise ValueError(msg)
+
+        max_chars = get_settings().max_problem_statement_chars
+        if len(value) > max_chars:
+            msg = f"problem_statement exceeds maximum length of {max_chars} characters"
             raise ValueError(msg)
 
         return value

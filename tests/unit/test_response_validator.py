@@ -82,7 +82,7 @@ def test_garbage_returns_none() -> None:
     assert validate_llm_output("not json at all", "sub_1", "def source(): pass") is None
 
 
-def test_oversized_concept_gaps_are_truncated(monkeypatch) -> None:
+def test_oversized_concept_gaps_are_truncated(monkeypatch) -> None:  
     """Overproduced concept gaps are capped by settings."""
 
     monkeypatch.setattr(
@@ -130,59 +130,78 @@ def test_wrong_schema_version_is_invalid() -> None:
     assert validate_llm_output(raw, "sub_1", "def source(): pass") is None
 
 
-def test_banned_phrase_logs_warning(caplog) -> None:
-    """Using a banned phrase logs a warning but does not fail validation."""
-    
+def test_banned_phrase_enforced_and_logs_warning(caplog) -> None:  
+    """Banned phrase detection enforces rejection (result is None) AND logs a warning.
+
+    Previously this was log-only. Now the response is rejected as a safety gate.
+    """
+
     raw = VALID_LLM_JSON.replace(
         "Your loop skips the target at the right edge.",
         "Check your logic. Your loop skips the target."
     )
-    
+
     with caplog.at_level(logging.WARNING):
         result = validate_llm_output(raw, "sub_1", "def source(): pass")
-    
-    assert result is not None
-    assert "check your logic" in result.feedback_text.lower()
+
+    assert result is None
     assert any("banned phrase used in llm output" in rec.message for rec in caplog.records)
 
 
-def test_no_banned_phrase_logs_nothing(caplog) -> None:
+def test_no_banned_phrase_logs_nothing(caplog) -> None:  
     """Valid feedback without banned phrases does not log a warning."""
-    
+
     with caplog.at_level(logging.WARNING):
         result = validate_llm_output(VALID_LLM_JSON, "sub_1", "def source(): pass")
-        
+
     assert result is not None
     assert not any("banned phrase used in llm output" in rec.message for rec in caplog.records)
 
 
-def test_hallucinated_reference_logs_warning(caplog) -> None:
-    """References that don't appear in source code trigger a warning."""
-    
+def test_hallucinated_reference_enforced_and_logs_warning(caplog) -> None:  
+    """Hallucinated reference detection enforces rejection AND logs a warning.
+
+    Previously this was log-only. Now the response is rejected as a safety gate.
+    """
+
     raw = VALID_LLM_JSON.replace(
         "Your loop skips the target at the right edge.",
         "Your loop skips the `missing_var` at the right edge."
     )
-    
-    import logging
+
     with caplog.at_level(logging.WARNING):
         result = validate_llm_output(raw, "sub_1", "def source(): pass")
-        
-    assert result is not None
+
+    assert result is None
     assert any("possible hallucinated reference" in rec.message for rec in caplog.records)
 
 
-def test_valid_reference_does_not_log_warning(caplog) -> None:
+def test_valid_reference_does_not_log_warning(caplog) -> None:  
     """References that appear in source code do not trigger a warning."""
-    
+
     raw = VALID_LLM_JSON.replace(
         "Your loop skips the target at the right edge.",
         "Your loop skips the `target` at the right edge."
     )
-    
-    import logging
+
     with caplog.at_level(logging.WARNING):
         result = validate_llm_output(raw, "sub_1", "def source(target): pass")
-        
+
     assert result is not None
     assert not any("possible hallucinated reference" in rec.message for rec in caplog.records)
+
+
+def test_hallucinated_reference_in_hint_text_enforced(caplog) -> None:  
+    """Hallucinated identifier specifically in hint_text (feedback clean) is now caught.
+
+    Before P2-2, only feedback_text was checked — this case would have passed silently.
+    """
+    raw = VALID_LLM_JSON.replace(
+        "Check how the upper bound is updated.",
+        "Try calling `missing_func` to fix the bound."
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = validate_llm_output(raw, "sub_1", "def source(): pass")
+    assert result is None
+    assert any("possible hallucinated reference" in rec.message for rec in caplog.records)

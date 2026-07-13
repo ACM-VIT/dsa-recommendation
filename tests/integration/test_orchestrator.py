@@ -116,3 +116,24 @@ async def test_invalid_llm_output_returns_invalid_status(fake_llm) -> None:
     assert response.processing_status == "llm_output_invalid"
     assert response.model_used != "none"
     assert fake_llm.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_unsafe_input_returns_distinct_status(fake_llm) -> None:
+    """UnsafeInputError is a distinct, non-retryable outcome separate from generic errors.
+
+    A null byte in source_code triggers UnsafeInputError — the response must use
+    processing_status='unsafe_input', clearly distinguishable from 'error' (transient
+    failure) so automated clients know not to retry this request unchanged.
+    """
+
+    unsafe_payload = VALID_WRONG_ANSWER_PAYLOAD | {
+        "source_code": "def solve(nums):\n    return sum(nums)\x00"
+    }
+
+    response = await analyze_submission(_request(unsafe_payload))
+
+    assert response.processing_status == "unsafe_input"
+    assert fake_llm.calls == 0
+    assert response.processing_status != "error"
+

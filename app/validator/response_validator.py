@@ -26,6 +26,13 @@ BANNED_PHRASES = [
     "your algorithm is incorrect",
 ]
 
+BANNED_PHRASE_FALLBACK = (
+    "Feedback could not be verified — please try again or review the judge output."
+)
+HALLUCINATION_FALLBACK = (
+    "Feedback could not be verified against your submission — please try again."
+)
+
 
 class _LLMResponsePayload(BaseModel):
     """Subset of AnalyzeResponse expected directly from the LLM."""
@@ -165,6 +172,16 @@ def _normalize_candidate_data(data: dict[str, Any]) -> dict[str, Any] | None:
     return data
 
 
+def _extract_identifiers(text: str) -> set[str]:
+    """Extract code identifiers (backtick-wrapped or camelCase/snake_case) from text."""
+
+    backtick_matches = re.findall(r"`([^`\s]+)`", text)
+    identifier_matches = re.findall(
+        r"\b[a-z]+(?:_[a-z0-9]+)+|[a-z]+[A-Z][a-zA-Z0-9]*\b", text
+    )
+    return set(backtick_matches + identifier_matches)
+
+
 def validate_llm_output(
     raw_text: str,
     submission_id: str,
@@ -175,8 +192,10 @@ def validate_llm_output(
     for candidate in _candidate_texts(raw_text):
         payload = _validate_candidate(candidate)
         if payload is not None:
-            _check_banned_phrases(payload, submission_id)
-            _check_hallucinated_references(payload, submission_id, source_code)
+            if _check_banned_phrases(payload, submission_id):
+                return None
+            if _check_hallucinated_references(payload, submission_id, source_code):
+                return None
             return payload
 
     logger.warning(
@@ -186,8 +205,12 @@ def validate_llm_output(
     return None
 
 
-def _check_banned_phrases(payload: _LLMResponsePayload, submission_id: str) -> None:
-    """Log a warning if any banned phrase is used."""
+def _check_banned_phrases(payload: _LLMResponsePayload, submission_id: str) -> bool:
+    """Log a warning and return True if any banned phrase is detected.
+
+    Returning True causes validate_llm_output to reject the response entirely,
+    triggering the llm_output_invalid fallback path in the orchestrator.
+    """
 
     combined_text = (payload.feedback_text + " " + payload.hint_text).lower()
     for phrase in BANNED_PHRASES:
@@ -199,20 +222,22 @@ def _check_banned_phrases(payload: _LLMResponsePayload, submission_id: str) -> N
                     "matched_phrase": phrase,
                 },
             )
+            return True
+    return False
 
 
 def _check_hallucinated_references(
     payload: _LLMResponsePayload, submission_id: str, source_code: str
-) -> None:
-    """Log a warning if referenced identifiers don't exist in the source code."""
-    
-    # Extract identifiers wrapped in backticks or matching camelCase/snake_case
-    backtick_matches = re.findall(r'`([^`\s]+)`', payload.feedback_text)
-    identifier_matches = re.findall(
-        r'\b[a-z]+(?:_[a-z0-9]+)+|[a-z]+[A-Z][a-zA-Z0-9]*\b', payload.feedback_text
+) -> bool:
+    """Log a warning and return True if identifiers not in source code are detected.
+
+    Checks both feedback_text and hint_text — either field referencing a nonexistent
+    identifier triggers the same enforcement (return True → response rejected).
+    """
+    candidates = _extract_identifiers(payload.feedback_text) | _extract_identifiers(
+        payload.hint_text
     )
-    
-    candidates = set(backtick_matches + identifier_matches)
+
     for candidate in candidates:
         if candidate not in source_code:
             logger.warning(
@@ -223,3 +248,5 @@ def _check_hallucinated_references(
                     "possible_hallucinated_reference": True,
                 },
             )
+            return True
+    return False

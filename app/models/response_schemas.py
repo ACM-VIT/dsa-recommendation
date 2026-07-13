@@ -16,7 +16,7 @@ ErrorCategory = Literal[
     "unknown",
 ]
 ReasoningQuality = Literal["strong", "partial", "weak", "unknown"]
-ProcessingStatus = Literal["completed", "rule_only", "llm_output_invalid", "timeout", "error"]
+ProcessingStatus = Literal["completed", "rule_only", "llm_output_invalid", "timeout", "error", "unsafe_input"]
 
 
 class AnalyzeResponse(BaseModel):

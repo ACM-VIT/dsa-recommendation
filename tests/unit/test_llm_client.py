@@ -186,6 +186,34 @@ async def test_llm_client_uses_configured_timeout(monkeypatch) -> None:
     assert result == "raw"
 
 
+@pytest.mark.asyncio
+async def test_vllm_log_metadata_only_no_raw_content(monkeypatch, caplog) -> None:
+    """vLLM provider logs metadata only — raw content must not appear in the log extra."""
+
+    import logging
+
+    raw_content = '{"feedback_text":"ok"}'
+
+    _FakeAsyncClient.response = _response(
+        200,
+        {"choices": [{"message": {"content": raw_content}}]},
+    )
+    _FakeAsyncClient.exception = None
+    monkeypatch.setattr(vllm_provider.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with caplog.at_level(logging.DEBUG, logger="app.llm.vllm_provider"):
+        await VLLMProvider().generate("system", "user", timeout_seconds=3)
+
+    # Find the llm_response_received log record
+    debug_records = [r for r in caplog.records if r.getMessage() == "llm_response_received"]
+    assert debug_records, "Expected a 'llm_response_received' debug log record"
+
+    log_extra = debug_records[0].__dict__
+    assert raw_content not in str(log_extra), "Raw LLM content must not be logged"
+    assert "response_length_chars" in log_extra
+    assert "model" in log_extra
+
+
 def test_strip_thinking_block_basic() -> None:
     """Basic case: input with a <think>...</think> block followed by valid JSON."""
     raw = "<think>\nThinking...\n</think>\n\n{\"key\": \"value\"}"

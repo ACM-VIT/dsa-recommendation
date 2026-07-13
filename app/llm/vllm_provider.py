@@ -72,8 +72,14 @@ class VLLMProvider:
         if not isinstance(content, str):
             msg = "vLLM response did not contain assistant content"
             raise LLMError(msg)
-            
-        logger.debug("raw model output", extra={"raw_text": content})
-        
+
+        logger.debug(
+            "llm_response_received",
+            extra={
+                "response_length_chars": len(content),
+                "model": settings.vllm_model,
+            },
+        )
+
         cleaned_content = strip_thinking_block(content)
         return cleaned_content

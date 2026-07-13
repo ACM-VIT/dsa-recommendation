@@ -65,6 +65,42 @@ def scrub_llm_output(text: str, source_code: str) -> str:
     return text
 
 
+def scrub_llm_output_pair(
+    feedback_text: str, hint_text: str, source_code: str
+) -> tuple[str, str]:
+    """Scrub a (feedback_text, hint_text) pair against a single combined leak threshold.
+
+    Design choice: if the combined count of leaked source lines across BOTH fields
+    exceeds the threshold, BOTH fields are replaced with the safe fallback message.
+    Blanking both (rather than selectively redacting) is the simpler, safer approach —
+    it avoids partial leaks where one field is cleaned but the other still exposes
+    solution fragments in context.
+    """
+
+    settings = get_settings()
+    source_lines = _non_trivial_source_lines(source_code)
+
+    normalized_feedback = _normalize_whitespace(feedback_text)
+    normalized_hint = _normalize_whitespace(hint_text)
+    total_matching = sum(
+        1
+        for line in source_lines
+        if line and (line in normalized_feedback or line in normalized_hint)
+    )
+
+    if total_matching > settings.solution_leak_line_threshold:
+        logger.warning(
+            "llm output pair withheld because combined fields may contain solution code",
+            extra={
+                "matched_source_lines": total_matching,
+                "threshold": settings.solution_leak_line_threshold,
+            },
+        )
+        return SAFE_LLM_OUTPUT_FALLBACK, SAFE_LLM_OUTPUT_FALLBACK
+
+    return feedback_text, hint_text
+
+
 def _non_trivial_source_lines(source_code: str) -> list[str]:
     """Return normalized source lines worth checking for verbatim leakage."""
 

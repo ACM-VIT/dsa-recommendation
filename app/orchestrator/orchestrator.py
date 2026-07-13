@@ -11,6 +11,7 @@ from app.constants import (
     PROCESSING_STATUS_LLM_OUTPUT_INVALID,
     PROCESSING_STATUS_RULE_ONLY,
     PROCESSING_STATUS_TIMEOUT,
+    PROCESSING_STATUS_UNSAFE_INPUT,
     REASONING_QUALITY_UNKNOWN,
 )
 from app.llm.base import LLMError, LLMTimeoutError
@@ -21,7 +22,11 @@ from app.models.response_schemas import AnalyzeResponse, ErrorCategory, Processi
 from app.parser.normalizer import normalize
 from app.prompt_builder.builder import build_prompt
 from app.rule_engine.engine import run_rules
-from app.security.sanitizer import scrub_llm_output, validate_input_safety
+from app.security.sanitizer import (
+    UnsafeInputError,
+    scrub_llm_output_pair,
+    validate_input_safety,
+)
 from app.validator.response_validator import validate_llm_output
 
 logger = get_logger(__name__)
@@ -85,6 +90,18 @@ async def analyze_submission(request: AnalyzeRequest) -> AnalyzeResponse:
     try:
         try:
             validate_input_safety(request)
+        except UnsafeInputError:
+            logger.warning("unsafe input rejected")
+            return _fallback_response(
+                request,
+                started_at=started_at,
+                processing_status=PROCESSING_STATUS_UNSAFE_INPUT,
+                model_used="none",
+                feedback_text="Your submission could not be processed due to invalid input.",
+                hint_text="Please check your submission for any unusual characters and try again.",
+            )
+
+        try:
             sub = normalize(request)
             rule_outcome = run_rules(sub)
             logger.info(
@@ -140,11 +157,14 @@ async def analyze_submission(request: AnalyzeRequest) -> AnalyzeResponse:
                     hint_text=rule_outcome.deterministic_hint,
                     error_category=rule_outcome.error_category,
                 )
+            feedback_text, hint_text = scrub_llm_output_pair(
+                parsed.feedback_text, parsed.hint_text, sub.source_code
+            )
 
             return AnalyzeResponse(
                 submission_id=request.submission_id,
-                feedback_text=scrub_llm_output(parsed.feedback_text, sub.source_code),
-                hint_text=scrub_llm_output(parsed.hint_text, sub.source_code),
+                feedback_text=feedback_text,
+                hint_text=hint_text,
                 error_category=parsed.error_category,
                 reasoning_quality=parsed.reasoning_quality,
                 concept_gaps=parsed.concept_gaps,

@@ -1,5 +1,7 @@
 """Settings tests."""
 
+import pytest
+
 from app.config.settings import Settings
 
 ENV_VARS = [
@@ -61,3 +63,24 @@ def test_settings_load_from_env(monkeypatch) -> None:  # type: ignore[no-untyped
     assert settings.max_problem_statement_chars == 1200
     assert settings.rule_engine_enabled is False
     assert settings.solution_leak_line_threshold == 4
+
+
+def test_ollama_only_starts_without_provider_keys(monkeypatch) -> None:
+    """Settings load cleanly with LLM_PROVIDER=ollama and no API keys at all."""
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.delenv("VLLM_API_KEY", raising=False)
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_provider == "ollama"
+    assert settings.vllm_api_key is None
+
+
+def test_vllm_without_api_key_raises(monkeypatch) -> None:
+    """Settings raise a clear error when LLM_PROVIDER=vllm but VLLM_API_KEY is missing."""
+
+    monkeypatch.setenv("LLM_PROVIDER", "vllm")
+    monkeypatch.delenv("VLLM_API_KEY", raising=False)
+
+    with pytest.raises(Exception, match="VLLM_API_KEY"):
+        Settings(_env_file=None)

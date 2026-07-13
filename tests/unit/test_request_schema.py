@@ -18,6 +18,7 @@ def test_valid_payload_parses() -> None:
     )
 
     assert request.submission_id == VALID_WRONG_ANSWER_PAYLOAD["submission_id"]
+    assert request.problem_statement == VALID_WRONG_ANSWER_PAYLOAD["problem_statement"]
     assert request.verdict == VALID_WRONG_ANSWER_PAYLOAD["verdict"]
     assert request.submitted_at == expected_datetime
     assert request.model_dump(mode="json").keys() == VALID_WRONG_ANSWER_PAYLOAD.keys()
@@ -37,6 +38,27 @@ def test_oversized_source_code_rejected() -> None:
 
     max_chars = get_settings().max_source_code_chars
     payload = VALID_WRONG_ANSWER_PAYLOAD | {"source_code": "x" * (max_chars + 1)}
+
+    with pytest.raises(ValidationError):
+        AnalyzeRequest.model_validate(payload)
+
+
+def test_oversized_problem_statement_rejected() -> None:
+    """Problem statement longer than the configured cap is rejected."""
+
+    max_chars = get_settings().max_problem_statement_chars
+    payload = VALID_WRONG_ANSWER_PAYLOAD | {
+        "problem_statement": "x" * (max_chars + 1),
+    }
+
+    with pytest.raises(ValidationError):
+        AnalyzeRequest.model_validate(payload)
+
+
+def test_empty_problem_statement_rejected() -> None:
+    """Problem statement must contain non-whitespace text."""
+
+    payload = VALID_WRONG_ANSWER_PAYLOAD | {"problem_statement": "   "}
 
     with pytest.raises(ValidationError):
         AnalyzeRequest.model_validate(payload)

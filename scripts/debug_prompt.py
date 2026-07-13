@@ -7,11 +7,6 @@ from tests.fixtures.sample_payloads import VALID_WRONG_ANSWER_PAYLOAD
 
 payload = VALID_WRONG_ANSWER_PAYLOAD.copy()
 
-payload["source_code"] = (
-    "def solve():\n"
-    + "    x = 1\n" * 1500
-)
-
 request = AnalyzeRequest.model_validate(payload)
 submission = normalize(request)
 outcome = run_rules(submission)

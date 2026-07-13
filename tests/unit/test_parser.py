@@ -15,6 +15,7 @@ def test_normalizes_sample_fixture() -> None:
     submission = normalize(request)
 
     assert submission.submission_id == request.submission_id
+    assert submission.problem_statement == request.problem_statement.strip()
     assert (
         submission.test_summary.failed_test_cases
         == VALID_WRONG_ANSWER_PAYLOAD["test_summary"]["failed_test_cases"]
@@ -29,6 +30,7 @@ def test_trims_output_whitespace() -> None:
     """Judge text fields and sample case outputs are trimmed consistently."""
 
     payload = VALID_WRONG_ANSWER_PAYLOAD | {
+        "problem_statement": "  Solve the problem carefully.  ",
         "stdout": "8\n\n",
         "stderr": "Traceback\n",
         "sample_failed_cases": [
@@ -44,6 +46,7 @@ def test_trims_output_whitespace() -> None:
     submission = normalize(request)
 
     assert submission.stdout == "8"
+    assert submission.problem_statement == "Solve the problem carefully."
     assert submission.stderr == "Traceback"
     assert submission.sample_failed_cases[0].stdin == "5\n1 2 3 4 5"
     assert submission.sample_failed_cases[0].expected_output == "9"

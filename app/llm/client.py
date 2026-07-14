@@ -19,6 +19,15 @@ def get_llm_provider() -> LLMProvider:
     return VLLMProvider()
 
 
+def get_active_model_name() -> str:
+    """Return the configured model name for the active provider."""
+
+    settings = get_settings()
+    if settings.llm_provider == "ollama":
+        return settings.ollama_model
+    return settings.vllm_model
+
+
 class LLMClient:
     """Client used by the orchestrator to request raw structured completions."""
 

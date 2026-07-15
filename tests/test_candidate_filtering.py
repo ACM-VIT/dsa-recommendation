@@ -65,6 +65,17 @@ class TestPerPoolFiltering(unittest.TestCase):
         self.assertEqual(merged, [])
         self.assertEqual(report.removed_deprioritised, 1)
 
+    def test_recently_exposed_removed(self):
+        """Defense-in-depth: same recently_exposed() check BasePool._exclude_ids()
+        applies at pool-generation time, re-checked here at the global merge layer."""
+        import time
+        g = _graph()
+        g.exposed_ids["p1"] = time.time()
+        layer = CandidateFilteringLayer(g)
+        merged, report = layer.run({"A": [_cand("p1", "A", ["arrays"])]})
+        self.assertEqual(merged, [])
+        self.assertEqual(report.removed_deprioritised, 1)
+
     def test_locked_removed(self):
         # "graphs" requires "trees" (PREREQ), user hasn't mastered trees
         g = _graph(

@@ -52,6 +52,15 @@ SEVERITY_WEAK_THRESHOLD = 0.6
 MIX_BEGINNER = (0.60, 0.30, 0.10)
 MIX_ADVANCED = (0.15, 0.40, 0.45)
 
+# Distinct from MIX_BEGINNER: a user's very first-ever recommendations
+# (is_cold_start -- zero concept_edges or zero solved problems, not merely
+# "low mastery") get an EXTRA gentle mix, not just the general beginner
+# mix. A user who has solved nothing yet has zero evidence they can even
+# handle a medium problem -- MIX_BEGINNER's 30% medium / 10% hard is too
+# much to lead with. Once they've solved even one problem, avg_mastery
+# (no longer exactly 0) and _base_mix's normal interpolation take over.
+MIX_COLD_START = (0.85, 0.15, 0.0)
+
 
 @dataclass
 class PoolDirective:
@@ -115,7 +124,10 @@ class AdaptiveDifficultyController:
         weights = self._pool_weights(
             level, n_weak, n_urgent, n_overdue, is_cold
         )
-        base_mix = self._base_mix(avg_mastery)
+        # Cold start gets its own extra-gentle mix (see MIX_COLD_START),
+        # not just the general beginner interpolation -- a user's very
+        # first recommendations should require extremely low difficulty.
+        base_mix = MIX_COLD_START if is_cold else self._base_mix(avg_mastery)
 
         directives = {}
         for pool in POOLS:

@@ -302,18 +302,23 @@ class _InProcessCache:
         self._store.pop(key, None)
 
 
-def apply_submission(user_id: str, submission: dict, neo4j_store, qdrant, redis) -> dict:
+def apply_submission(user_id: str, submission: dict, neo4j_store, qdrant, redis, db=None) -> dict:
     """
     Route an optional "submission" through StateUpdateService -- the same
     canonical path POST /update uses (BKT + HLR update, written through to
     the UserGraph via Redis + Neo4j). Returns the same shape
     submission_controller.py::handle_update returns, so this script's
     "state_update" field matches the real API response exactly.
+
+    db: optional Postgres bootstrap-read session (see
+    database/postgres/db.py::get_user_graph_session) -- same fallback
+    role it plays in submission_controller.py. None (the default) just
+    means the user builds cold if Redis/Neo4j also have nothing for them.
     """
     from pipeline.recommender.services.state_update_service import StateUpdateService
     from pipeline.recommender.services.user_graph_service import UserGraphService
 
-    graph_service = UserGraphService(db=None, redis=redis, neo4j=neo4j_store)
+    graph_service = UserGraphService(db=db, redis=redis, neo4j=neo4j_store)
     service = StateUpdateService(graph_service, qdrant=qdrant)
 
     submission_dict = dict(submission)
@@ -365,29 +370,45 @@ def handle_request(request: dict) -> dict:
     # same-run consistency regardless of that.
     in_process_cache = _InProcessCache()
 
-    state_update_response = None
-    if submission is not None:
-        _log(f"\n[->] Processing submission for problemId={submission.get('problemId')} "
-             f"before generating recommendations...")
-        state_update_response = apply_submission(
-            user_id, submission, neo4j_store, qdrant, redis=in_process_cache)
-        _log(f"[OK] State update complete: "
-             f"{len(state_update_response['updatedTopics'])} topic(s) touched, "
-             f"{len(state_update_response['masteredTopics'])} newly mastered.")
+    # Postgres bootstrap-read session for UserGraphService's cold-start
+    # fallback (same role as submission_controller.py/recommendation_
+    # controller.py's get_user_graph_session() usage) -- without this, a
+    # user with real Postgres history but no reachable Neo4j/no prior
+    # in-process cache entry always builds cold, and _fetch_user's
+    # AttributeError-on-None gets logged every run ("Failed to fetch user
+    # ...: 'NoneType' object has no attribute 'execute'"). None if
+    # DATABASE_URL isn't set or the connection fails -- same graceful
+    # degrade as everywhere else.
+    from database.postgres.db import get_user_graph_session
+    db = get_user_graph_session()
 
-    # BKT/HLR stores are legacy get_recommendations() params, kept for
-    # backward compatibility -- the canonical read path is now UserGraph
-    # (via neo4j_store + in_process_cache above), which apply_submission()
-    # just wrote through to if a submission was processed this run.
-    bkt_store: dict = {}
-    hlr_store: dict = {}
-    db = None
+    try:
+        state_update_response = None
+        if submission is not None:
+            _log(f"\n[->] Processing submission for problemId={submission.get('problemId')} "
+                 f"before generating recommendations...")
+            state_update_response = apply_submission(
+                user_id, submission, neo4j_store, qdrant, redis=in_process_cache, db=db)
+            _log(f"[OK] State update complete: "
+                 f"{len(state_update_response['updatedTopics'])} topic(s) touched, "
+                 f"{len(state_update_response['masteredTopics'])} newly mastered.")
 
-    result = get_recommendations(
-        user_id=user_id, db=db, redis=in_process_cache, neo4j=neo4j_store, qdrant=qdrant,
-        bkt_store=bkt_store, hlr_store=hlr_store,
-        collection="problems_full", total_n=total_n, k=k,
-    )
+        # BKT/HLR stores are legacy get_recommendations() params, kept for
+        # backward compatibility -- the canonical read path is now UserGraph
+        # (via neo4j_store + in_process_cache above), which apply_submission()
+        # just wrote through to if a submission was processed this run.
+        bkt_store: dict = {}
+        hlr_store: dict = {}
+
+        result = get_recommendations(
+            user_id=user_id, db=db, redis=in_process_cache, neo4j=neo4j_store, qdrant=qdrant,
+            bkt_store=bkt_store, hlr_store=hlr_store,
+            collection="problems_full", total_n=total_n, k=k,
+        )
+    finally:
+        if db is not None:
+            db.close()
+
     response = result.to_dict()
     response = resolve_recommendations(response, qdrant, collection="problems_full")
     response["session_mode"] = session_mode

@@ -1,0 +1,23 @@
+{
+  "user_id": "pipeline_demo_full_loop",
+  "k": 5,
+  "total_n": 30,
+  "session_mode": "practice",
+  "skip_offline": true,
+  "no_neo4j": true,
+  "submission": {
+    "problemId": "two-sum",
+    "verdict": "OK",
+    "hintsUsed": 0,
+    "testCasesPassed": 10,
+    "totalTestCases": 10,
+    "submissionCount": 1,
+    "normalisedScore": 0.95,
+    "problemDifficulty": 0.15,
+    "problemTopics": [
+      { "topicId": "array", "currentMastery": null, "currentHlr": null },
+      { "topicId": "hash_map", "currentMastery": null, "currentHlr": null },
+      { "topicId": "simulation", "currentMastery": null, "currentHlr": null }
+    ]
+  }
+}

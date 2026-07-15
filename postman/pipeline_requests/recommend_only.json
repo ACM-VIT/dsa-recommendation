@@ -1,0 +1,8 @@
+{
+  "user_id": "pipeline_demo_recommend_only",
+  "k": 5,
+  "total_n": 30,
+  "session_mode": "practice",
+  "skip_offline": true,
+  "no_neo4j": true
+}

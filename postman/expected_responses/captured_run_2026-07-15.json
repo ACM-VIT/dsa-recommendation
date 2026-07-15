@@ -1,0 +1,880 @@
+{
+  "GET /": {
+    "status": 200,
+    "body": {
+      "message": "Welcome to Recommendation Service"
+    }
+  },
+  "POST /update (01_cold_start_easy_solve.json)": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_1",
+      "problemId": "two-sum",
+      "updatedTopics": [
+        {
+          "topicId": "array",
+          "updatedMastery": 0.2448,
+          "updatedHlr": {
+            "half_life": 1.209,
+            "last_review": "2026-07-15T17:36:39.902153+00:00",
+            "performance": 0.7742,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          }
+        },
+        {
+          "topicId": "hash_map",
+          "updatedMastery": 0.2448,
+          "updatedHlr": {
+            "half_life": 1.209,
+            "last_review": "2026-07-15T17:36:39.902153+00:00",
+            "performance": 0.7742,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          }
+        },
+        {
+          "topicId": "simulation",
+          "updatedMastery": 0.2448,
+          "updatedHlr": {
+            "half_life": 1.209,
+            "last_review": "2026-07-15T17:36:39.902153+00:00",
+            "performance": 0.7742,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          }
+        }
+      ],
+      "masteredTopics": [],
+      "results": {
+        "bkt": [
+          {
+            "topic": "array",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2448,
+            "mastered": false,
+            "observed_score": 0.7742
+          },
+          {
+            "topic": "hash_map",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2448,
+            "mastered": false,
+            "observed_score": 0.7742
+          },
+          {
+            "topic": "simulation",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2448,
+            "mastered": false,
+            "observed_score": 0.7742
+          }
+        ],
+        "hlr": [
+          {
+            "topic": "array",
+            "performance": 0.7742,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.209,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          },
+          {
+            "topic": "hash_map",
+            "performance": 0.7742,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.209,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          },
+          {
+            "topic": "simulation",
+            "performance": 0.7742,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.209,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          }
+        ]
+      }
+    }
+  },
+  "POST /update (02_struggling_many_attempts.json)": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_2",
+      "problemId": "climbing-stairs",
+      "updatedTopics": [
+        {
+          "topicId": "array",
+          "updatedMastery": 0.2361,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:36:55.842457+00:00",
+            "performance": 0.3648,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        },
+        {
+          "topicId": "sequence_dp",
+          "updatedMastery": 0.2361,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:36:55.842457+00:00",
+            "performance": 0.3648,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        },
+        {
+          "topicId": "dp",
+          "updatedMastery": 0.2361,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:36:55.842457+00:00",
+            "performance": 0.3648,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        },
+        {
+          "topicId": "tabulation",
+          "updatedMastery": 0.2361,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:36:55.842457+00:00",
+            "performance": 0.3648,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        }
+      ],
+      "masteredTopics": [],
+      "results": {
+        "bkt": [
+          {
+            "topic": "dp",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2361,
+            "mastered": false,
+            "observed_score": 0.3648
+          },
+          {
+            "topic": "array",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2361,
+            "mastered": false,
+            "observed_score": 0.3648
+          },
+          {
+            "topic": "sequence_dp",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2361,
+            "mastered": false,
+            "observed_score": 0.3648
+          },
+          {
+            "topic": "tabulation",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2361,
+            "mastered": false,
+            "observed_score": 0.3648
+          }
+        ],
+        "hlr": [
+          {
+            "topic": "dp",
+            "performance": 0.3648,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          },
+          {
+            "topic": "array",
+            "performance": 0.3648,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          },
+          {
+            "topic": "sequence_dp",
+            "performance": 0.3648,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          },
+          {
+            "topic": "tabulation",
+            "performance": 0.3648,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        ]
+      }
+    }
+  },
+  "POST /update (03_wrong_answer.json)": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_3",
+      "problemId": "maximum-subarray",
+      "updatedTopics": [
+        {
+          "topicId": "dp",
+          "updatedMastery": 0.2273,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:37:08.322831+00:00",
+            "performance": 0.35,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        },
+        {
+          "topicId": "in_place_modification",
+          "updatedMastery": 0.2273,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:37:08.322831+00:00",
+            "performance": 0.35,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        },
+        {
+          "topicId": "sequence_dp",
+          "updatedMastery": 0.2273,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:37:08.322831+00:00",
+            "performance": 0.35,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        },
+        {
+          "topicId": "two_pass_scan",
+          "updatedMastery": 0.2273,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:37:08.322831+00:00",
+            "performance": 0.35,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        },
+        {
+          "topicId": "array",
+          "updatedMastery": 0.2273,
+          "updatedHlr": {
+            "half_life": 1.0,
+            "last_review": "2026-07-15T17:37:08.322831+00:00",
+            "performance": 0.35,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        }
+      ],
+      "masteredTopics": [],
+      "results": {
+        "bkt": [
+          {
+            "topic": "dp",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2273,
+            "mastered": false,
+            "observed_score": 0.35
+          },
+          {
+            "topic": "array",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2273,
+            "mastered": false,
+            "observed_score": 0.35
+          },
+          {
+            "topic": "sequence_dp",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2273,
+            "mastered": false,
+            "observed_score": 0.35
+          },
+          {
+            "topic": "two_pass_scan",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2273,
+            "mastered": false,
+            "observed_score": 0.35
+          },
+          {
+            "topic": "in_place_modification",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2273,
+            "mastered": false,
+            "observed_score": 0.35
+          }
+        ],
+        "hlr": [
+          {
+            "topic": "dp",
+            "performance": 0.35,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          },
+          {
+            "topic": "array",
+            "performance": 0.35,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          },
+          {
+            "topic": "sequence_dp",
+            "performance": 0.35,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          },
+          {
+            "topic": "two_pass_scan",
+            "performance": 0.35,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          },
+          {
+            "topic": "in_place_modification",
+            "performance": 0.35,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.5
+          }
+        ]
+      }
+    }
+  },
+  "POST /update (04_moderate_difficulty_clean_solve.json)": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_4",
+      "problemId": "3sum",
+      "updatedTopics": [
+        {
+          "topicId": "array",
+          "updatedMastery": 0.27,
+          "updatedHlr": {
+            "half_life": 1.376,
+            "last_review": "2026-07-15T17:37:22.346842+00:00",
+            "performance": 0.96,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        },
+        {
+          "topicId": "two_pointers",
+          "updatedMastery": 0.27,
+          "updatedHlr": {
+            "half_life": 1.376,
+            "last_review": "2026-07-15T17:37:22.346842+00:00",
+            "performance": 0.96,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        }
+      ],
+      "masteredTopics": [],
+      "results": {
+        "bkt": [
+          {
+            "topic": "array",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.27,
+            "mastered": false,
+            "observed_score": 0.96
+          },
+          {
+            "topic": "two_pointers",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.27,
+            "mastered": false,
+            "observed_score": 0.96
+          }
+        ],
+        "hlr": [
+          {
+            "topic": "array",
+            "performance": 0.96,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.376,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          },
+          {
+            "topic": "two_pointers",
+            "performance": 0.96,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.376,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        ]
+      }
+    }
+  },
+  "POST /update (05a_warmup_before_trivial.json)": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_5",
+      "problemId": "3sum",
+      "updatedTopics": [
+        {
+          "topicId": "array",
+          "updatedMastery": 0.27,
+          "updatedHlr": {
+            "half_life": 1.376,
+            "last_review": "2026-07-15T17:37:34.237767+00:00",
+            "performance": 0.96,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        },
+        {
+          "topicId": "two_pointers",
+          "updatedMastery": 0.27,
+          "updatedHlr": {
+            "half_life": 1.376,
+            "last_review": "2026-07-15T17:37:34.237767+00:00",
+            "performance": 0.96,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        }
+      ],
+      "masteredTopics": [],
+      "results": {
+        "bkt": [
+          {
+            "topic": "array",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.27,
+            "mastered": false,
+            "observed_score": 0.96
+          },
+          {
+            "topic": "two_pointers",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.27,
+            "mastered": false,
+            "observed_score": 0.96
+          }
+        ],
+        "hlr": [
+          {
+            "topic": "array",
+            "performance": 0.96,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.376,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          },
+          {
+            "topic": "two_pointers",
+            "performance": 0.96,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.376,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        ]
+      }
+    }
+  },
+  "POST /update (05b_trivial_relative_to_mastery.json)": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_5",
+      "problemId": "two-sum",
+      "updatedTopics": [
+        {
+          "topicId": "array",
+          "updatedMastery": 0.3383,
+          "updatedHlr": {
+            "half_life": 1.937,
+            "last_review": "2026-07-15T17:37:41.730406+00:00",
+            "performance": 0.73,
+            "p_recall": 1.0,
+            "next_review_days": 1.0
+          }
+        },
+        {
+          "topicId": "hash_map",
+          "updatedMastery": 0.2376,
+          "updatedHlr": {
+            "half_life": 1.173,
+            "last_review": "2026-07-15T17:37:41.730406+00:00",
+            "performance": 0.73,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          }
+        },
+        {
+          "topicId": "simulation",
+          "updatedMastery": 0.2376,
+          "updatedHlr": {
+            "half_life": 1.173,
+            "last_review": "2026-07-15T17:37:41.730406+00:00",
+            "performance": 0.73,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          }
+        }
+      ],
+      "masteredTopics": [],
+      "results": {
+        "bkt": [
+          {
+            "topic": "array",
+            "previous_p_l": 0.27,
+            "new_p_l": 0.3383,
+            "mastered": false,
+            "observed_score": 0.73
+          },
+          {
+            "topic": "hash_map",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2376,
+            "mastered": false,
+            "observed_score": 0.73
+          },
+          {
+            "topic": "simulation",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2376,
+            "mastered": false,
+            "observed_score": 0.73
+          }
+        ],
+        "hlr": [
+          {
+            "topic": "array",
+            "performance": 0.73,
+            "previous_half_life": 1.376,
+            "new_half_life": 1.937,
+            "p_recall": 1.0,
+            "next_review_days": 1.0
+          },
+          {
+            "topic": "hash_map",
+            "performance": 0.73,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.173,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          },
+          {
+            "topic": "simulation",
+            "performance": 0.73,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.173,
+            "p_recall": 1.0,
+            "next_review_days": 0.6
+          }
+        ]
+      }
+    }
+  },
+  "POST /update (06_hard_stretch_solve.json)": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_6",
+      "problemId": "best-time-to-buy-and-sell-stock",
+      "updatedTopics": [
+        {
+          "topicId": "two_pass_scan",
+          "updatedMastery": 0.2988,
+          "updatedHlr": {
+            "half_life": 1.414,
+            "last_review": "2026-07-15T17:37:50.584716+00:00",
+            "performance": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        },
+        {
+          "topicId": "greedy",
+          "updatedMastery": 0.2988,
+          "updatedHlr": {
+            "half_life": 1.414,
+            "last_review": "2026-07-15T17:37:50.584716+00:00",
+            "performance": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        },
+        {
+          "topicId": "array",
+          "updatedMastery": 0.2988,
+          "updatedHlr": {
+            "half_life": 1.414,
+            "last_review": "2026-07-15T17:37:50.584716+00:00",
+            "performance": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        },
+        {
+          "topicId": "greedy_choice",
+          "updatedMastery": 0.2988,
+          "updatedHlr": {
+            "half_life": 1.414,
+            "last_review": "2026-07-15T17:37:50.584716+00:00",
+            "performance": 1.0,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        }
+      ],
+      "masteredTopics": [],
+      "results": {
+        "bkt": [
+          {
+            "topic": "array",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2988,
+            "mastered": false,
+            "observed_score": 1.0
+          },
+          {
+            "topic": "greedy",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2988,
+            "mastered": false,
+            "observed_score": 1.0
+          },
+          {
+            "topic": "greedy_choice",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2988,
+            "mastered": false,
+            "observed_score": 1.0
+          },
+          {
+            "topic": "two_pass_scan",
+            "previous_p_l": 0.15,
+            "new_p_l": 0.2988,
+            "mastered": false,
+            "observed_score": 1.0
+          }
+        ],
+        "hlr": [
+          {
+            "topic": "array",
+            "performance": 1.0,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.414,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          },
+          {
+            "topic": "greedy",
+            "performance": 1.0,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.414,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          },
+          {
+            "topic": "greedy_choice",
+            "performance": 1.0,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.414,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          },
+          {
+            "topic": "two_pass_scan",
+            "performance": 1.0,
+            "previous_half_life": 1.0,
+            "new_half_life": 1.414,
+            "p_recall": 1.0,
+            "next_review_days": 0.7
+          }
+        ]
+      }
+    }
+  },
+  "GET /recommend/postman_demo_user_1": {
+    "status": 200,
+    "body": {
+      "user_id": "postman_demo_user_1",
+      "recommendations": []
+    }
+  },
+  "GET /recommend/postman_demo_user_5": {
+    "status": 200,
+    "body": {
+      "user_id": "postman_demo_user_5",
+      "recommendations": []
+    }
+  },
+  "GET /recommend/truly_never_touched_user_2": {
+    "status": 200,
+    "body": {
+      "user_id": "truly_never_touched_user_2",
+      "recommendations": [
+        {
+          "problem_id": "bxmw7pseor0fh8zr8tn1xqgv",
+          "title": "Make Array Strictly Increasing",
+          "title_slug": "make-array-strictly-increasing",
+          "difficulty_score": 0.421,
+          "topic_tags": [
+            "arrays",
+            "binary_search",
+            "dynamic_programming",
+            "hash_tables",
+            "recursion",
+            "sorting"
+          ],
+          "source": "course_path",
+          "recommended_at": "2026-07-15T17:38:52.947540+00:00"
+        },
+        {
+          "problem_id": "d6z0e5es9i8qur9bbzcee9me",
+          "title": "Split the Array",
+          "title_slug": "",
+          "difficulty_score": 0.5,
+          "topic_tags": [
+            "arrays"
+          ],
+          "source": "course_path",
+          "recommended_at": "2026-07-15T17:38:52.947540+00:00"
+        }
+      ]
+    }
+  },
+  "GET /mastery/postman_demo_user_1": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_1",
+      "mastery": {},
+      "mastered_topics": [],
+      "proficiency": {}
+    }
+  },
+  "GET /urgency/postman_demo_user_1": {
+    "status": 200,
+    "body": {
+      "userId": "postman_demo_user_1",
+      "urgency_scores": {}
+    }
+  },
+  "GET /mastery/nonexistent_user_xyz": {
+    "status": 200,
+    "body": {
+      "userId": "nonexistent_user_xyz",
+      "mastery": {},
+      "mastered_topics": [],
+      "proficiency": {}
+    }
+  },
+  "GET /urgency/nonexistent_user_xyz": {
+    "status": 200,
+    "body": {
+      "userId": "nonexistent_user_xyz",
+      "urgency_scores": {}
+    }
+  },
+  "POST /seed_hlr/{user_id} (correct X-User-Id)": {
+    "status": 200,
+    "body": {
+      "message": "User not found"
+    }
+  },
+  "POST /seed_bkt/{user_id} (correct X-User-Id)": {
+    "status": 200,
+    "body": {
+      "message": "User not found"
+    }
+  },
+  "POST /seed_hlr/{user_id} (WRONG X-User-Id -> expect 403)": {
+    "status": 403,
+    "body": {
+      "detail": "Cannot seed data for another user"
+    }
+  },
+  "POST /seed_hlr/{user_id} (missing X-User-Id -> expect 401)": {
+    "status": 401,
+    "body": {
+      "detail": "Not authenticated"
+    }
+  },
+  "GET /recommend/{user_id}?limit=999 (should be clamped/rejected)": {
+    "status": 422,
+    "body": {
+      "detail": [
+        {
+          "type": "less_than_equal",
+          "loc": [
+            "query",
+            "limit"
+          ],
+          "msg": "Input should be less than or equal to 50",
+          "input": "999",
+          "ctx": {
+            "le": 50
+          }
+        }
+      ]
+    }
+  },
+  "GET /recommend/{user_id}?limit=0 (should be rejected, ge=1)": {
+    "status": 422,
+    "body": {
+      "detail": [
+        {
+          "type": "greater_than_equal",
+          "loc": [
+            "query",
+            "limit"
+          ],
+          "msg": "Input should be greater than or equal to 1",
+          "input": "0",
+          "ctx": {
+            "ge": 1
+          }
+        }
+      ]
+    }
+  },
+  "POST /update (missing required 'verdict' -> expect 422)": {
+    "status": 422,
+    "body": {
+      "detail": [
+        {
+          "type": "missing",
+          "loc": [
+            "body",
+            "verdict"
+          ],
+          "msg": "Field required",
+          "input": {
+            "userId": "x",
+            "problemId": "two-sum"
+          }
+        }
+      ]
+    }
+  }
+}

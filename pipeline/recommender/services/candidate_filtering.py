@@ -192,13 +192,18 @@ class CandidateFilteringLayer:
     # ------------------------------------------------------------- per-pool
 
     def _filter_pool(self, candidates: list, report: FilterReport) -> list:
-        """Remove solved, deprioritised, and locked candidates from one pool's raw list."""
+        """Remove solved, deprioritised, recently-shown, and locked
+        candidates from one pool's raw list -- defense in depth alongside
+        each pool's own BasePool._exclude_ids() pre-filter."""
         out = []
         for c in candidates:
             if c.problem_id in self.graph.solved_ids:
                 report.removed_solved += 1
                 continue
             if c.problem_id in self.graph.deprioritised_ids:
+                report.removed_deprioritised += 1
+                continue
+            if self.graph.recently_exposed(c.problem_id):
                 report.removed_deprioritised += 1
                 continue
             if self._is_locked(c):

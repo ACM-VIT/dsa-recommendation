@@ -100,8 +100,21 @@ class BasePool:
     # -- shared helpers ---------------------------------------------------
 
     def _exclude_ids(self, graph: UserGraph) -> set:
-        """Problems we never want to propose: already solved or deprioritised."""
-        return set(graph.solved_ids) | set(graph.deprioritised_ids)
+        """
+        Problems we never want to propose: already solved, deprioritised
+        (skipped 3+ times), or shown to the user again too recently.
+
+        The recently-exposed check was a real gap -- UserGraph.exposed_ids/
+        recently_exposed() already existed for this exact purpose (a
+        problem recommended once or twice but not yet solved/skipped-3x
+        had NO protection against being immediately re-recommended on the
+        very next call), just never wired in here. Uses recently_exposed()'s
+        own default 7-day window.
+        """
+        recently_shown = {
+            pid for pid in graph.exposed_ids if graph.recently_exposed(pid)
+        }
+        return set(graph.solved_ids) | set(graph.deprioritised_ids) | recently_shown
 
     def _self_filter_locked(self, candidates: list, graph: Optional[UserGraph]) -> list:
         """
@@ -121,8 +134,8 @@ class BasePool:
                                           max_delta: float = 0.5) -> list:
         """
         Coarse "not wildly irrelevant" safety net for ANN-based results
-        (TransferPool, VectorPool), which select purely on vector similarity
-        and have NO difficulty band restriction on the query itself --
+        (VectorPool), which select purely on vector similarity and have
+        NO difficulty band restriction on the query itself --
         unlike the concept-based pools, which already only ever fetch within
         their controller-assigned band via _draw_with_mix. Drops candidates
         whose difficulty is far from the user's overall ability estimate
@@ -152,6 +165,73 @@ class BasePool:
             if abs(c.difficulty_score - ability) <= max_delta:
                 out.append(c)
         return out
+
+    def _apply_mix_to_candidates(self, candidates: list, n: int,
+                                 mix: Optional[dict]) -> list[Candidate]:
+        """
+        Post-hoc difficulty-mix quota over an ALREADY-fetched candidate
+        list -- used by _ann(), which retrieves purely by vector
+        similarity in one round-trip and can't re-query Qdrant per
+        difficulty band the way _draw_with_mix's concept-based path does.
+        Buckets candidates into easy/medium/hard, then takes a quota from
+        each bucket in the SAME proportions as the adaptive difficulty
+        controller's mix, preserving each bucket's original similarity
+        order.
+
+        Without this, _ann() only had _self_filter_difficulty_relevance's
+        loose +/-0.5 safety net -- VectorPool's results didn't respect the
+        controller's easy/medium/hard proportions the way DifficultyPool/
+        CoursePathPool's _draw_with_mix-based results do, so the adaptive
+        difficulty curve was silently only 3/4-enforced across the pools.
+
+        If mix is None, returns the first n candidates unchanged (matches
+        _draw_with_mix's identical no-mix fallback). If a band's bucket
+        can't fill its quota, the shortfall spills into whatever's left
+        in the other buckets (in band order) rather than shrinking the
+        result below n.
+        """
+        if mix is None:
+            return candidates[:n]
+
+        buckets = {"easy": [], "medium": [], "hard": []}
+        for c in candidates:
+            if c.difficulty_score is None:
+                buckets["medium"].append(c)   # can't judge missing data -- treat as medium
+            elif c.difficulty_score < EASY_BAND[1]:
+                buckets["easy"].append(c)
+            elif c.difficulty_score < MED_BAND[1]:
+                buckets["medium"].append(c)
+            else:
+                buckets["hard"].append(c)
+
+        bands = ("easy", "medium", "hard")
+        sub = {b: max(0.0, mix.get(b, 0.0)) for b in bands}
+        total = sum(sub.values())
+        sub = ({b: 1.0 / len(bands) for b in bands} if total <= 0
+               else {b: v / total for b, v in sub.items()})
+
+        counts = {}
+        remaining = n
+        for i, b in enumerate(bands):
+            if i == len(bands) - 1:
+                counts[b] = remaining
+            else:
+                take = min(round(n * sub[b]), remaining)
+                counts[b] = take
+                remaining -= take
+
+        selected = []
+        for b in bands:
+            take = min(counts[b], len(buckets[b]))
+            selected.extend(buckets[b][:take])
+            buckets[b] = buckets[b][take:]
+
+        shortfall = n - len(selected)
+        if shortfall > 0:
+            leftovers = buckets["easy"] + buckets["medium"] + buckets["hard"]
+            selected.extend(leftovers[:shortfall])
+
+        return selected[:n]
 
     def _draw_with_mix(self, concept_slugs, n, exclude,
                        mix: Optional[dict] = None,
@@ -274,7 +354,8 @@ class BasePool:
                 break
         return out
 
-    def _ann(self, query_vec, n, exclude, graph: Optional[UserGraph] = None) -> list[Candidate]:
+    def _ann(self, query_vec, n, exclude, graph: Optional[UserGraph] = None,
+             mix: Optional[dict] = None) -> list[Candidate]:
         """
         ANN search over the user/query vector on the full collection.
 
@@ -283,7 +364,12 @@ class BasePool:
         -- so results are self-filtered here for both locked prereqs AND
         difficulty relevance (_self_filter_difficulty_relevance), which the
         concept-based pools don't need since they already only fetch within
-        their assigned band.
+        their assigned band. When `mix` is supplied, the controller's
+        easy/medium/hard proportions are ALSO applied post-hoc
+        (_apply_mix_to_candidates) so this pool's results respect the same
+        adaptive difficulty curve as the concept-based pools, not just the
+        loose safety-net filter. Over-fetches (n*5 instead of n*3) so the
+        mix quota has enough candidates per band to actually fill from.
         """
         if not self.qdrant or query_vec is None:
             return []
@@ -291,7 +377,7 @@ class BasePool:
             hits = self.qdrant.query_points(
                 collection_name=self.collection,
                 query=query_vec,
-                limit=n * 3, with_payload=True, with_vectors=False,
+                limit=max(n * 5, 30), with_payload=True, with_vectors=False,
             ).points
         except Exception:
             return []
@@ -308,4 +394,5 @@ class BasePool:
             ))
         out = self._self_filter_locked(out, graph)
         out = self._self_filter_difficulty_relevance(out, graph)
-        return out[:n]
+        out = self._apply_mix_to_candidates(out, n, mix)
+        return out

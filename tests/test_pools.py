@@ -130,6 +130,39 @@ def _concept(slug, mastery=0.5, urgency=0.0, severity=0.0,
 # Tests
 # --------------------------------------------------------------------------
 
+class TestExcludeIds(unittest.TestCase):
+    """
+    _exclude_ids() must keep old questions from being re-recommended:
+    solved (permanent), deprioritised/skipped-3x (permanent), AND recently
+    shown but not yet solved/skipped (time-windowed) -- the last of these
+    was a real gap: UserGraph.exposed_ids/recently_exposed() existed but
+    were never wired into the exclusion set until now.
+    """
+
+    def test_solved_excluded(self):
+        g = _graph(solved=["p1"])
+        pool = DifficultyPool(qdrant=FakeQdrant(_problems()))
+        self.assertIn("p1", pool._exclude_ids(g))
+
+    def test_deprioritised_excluded(self):
+        g = _graph()
+        g.deprioritised_ids.add("p2")
+        pool = DifficultyPool(qdrant=FakeQdrant(_problems()))
+        self.assertIn("p2", pool._exclude_ids(g))
+
+    def test_recently_exposed_excluded(self):
+        g = _graph()
+        g.exposed_ids["p3"] = time.time()   # shown right now
+        pool = DifficultyPool(qdrant=FakeQdrant(_problems()))
+        self.assertIn("p3", pool._exclude_ids(g))
+
+    def test_exposed_outside_window_not_excluded(self):
+        g = _graph()
+        g.exposed_ids["p4"] = time.time() - 10 * 86400   # 10 days ago, past the 7-day window
+        pool = DifficultyPool(qdrant=FakeQdrant(_problems()))
+        self.assertNotIn("p4", pool._exclude_ids(g))
+
+
 class TestCoursePath(unittest.TestCase):
     def test_returns_in_progress_concepts(self):
         g = _graph([_concept("arrays", mastery=0.5)], solved=[])
@@ -224,6 +257,42 @@ class TestVectorPool(unittest.TestCase):
         pool = VectorPool(qdrant=FakeQdrant(_problems()))
         cands = pool.generate(g, _StubState(None, g), n=5)
         self.assertEqual(cands, [])
+
+    def test_ann_path_respects_difficulty_mix(self):
+        """
+        Regression test: VectorPool's primary ANN path previously ignored
+        `mix` entirely (only the cold-start cooccurrence fallback used it),
+        so vector-similarity results didn't respect the adaptive difficulty
+        controller's easy/medium/hard proportions the way DifficultyPool/
+        CoursePathPool's results do -- only a loose +/-0.5 safety filter
+        applied. Give abundant candidates in every band so the counts
+        reflect the requested mix, not data scarcity.
+        """
+        problems = []
+        for i in range(20):
+            problems.append(_Pt(f"easy_{i}",   ["arrays"], 0.1, score=0.9 - i * 0.001))
+            problems.append(_Pt(f"medium_{i}", ["arrays"], 0.5, score=0.9 - i * 0.001))
+            problems.append(_Pt(f"hard_{i}",   ["arrays"], 0.9, score=0.9 - i * 0.001))
+        g = _graph([_concept("arrays", mastery=0.5)], solved=[])
+        pool = VectorPool(qdrant=FakeQdrant(problems))
+
+        # heavily easy-weighted mix -- almost all results should land in
+        # the easy band despite the safety filter alone (+/-0.5 around
+        # mastery=0.5) letting medium AND hard candidates through equally.
+        mix = {"easy": 0.9, "medium": 0.1, "hard": 0.0}
+        cands = pool.generate(g, _StubState([1.0] * 1920, g), n=10, mix=mix)
+        easy_count = sum(1 for c in cands if c.difficulty_score < 0.34)
+        self.assertGreaterEqual(easy_count, 8,
+                                "mix should dominate the ANN result composition, not just filter it loosely")
+
+    def test_ann_path_with_no_mix_falls_back_to_unfiltered_top_n(self):
+        """mix=None (caller not wired through it) preserves prior behavior:
+        no mix-based quota applied, just the safety-net filter + top n."""
+        problems = [_Pt(f"p_{i}", ["arrays"], 0.5, score=0.9 - i * 0.01) for i in range(10)]
+        g = _graph([_concept("arrays", mastery=0.5)], solved=[])
+        pool = VectorPool(qdrant=FakeQdrant(problems))
+        cands = pool.generate(g, _StubState([1.0] * 1920, g), n=5, mix=None)
+        self.assertEqual(len(cands), 5)
 
 
 class TestDifficultyPool(unittest.TestCase):

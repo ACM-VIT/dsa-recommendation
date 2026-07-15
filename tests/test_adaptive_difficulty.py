@@ -214,6 +214,29 @@ class TestColdStart(unittest.TestCase):
         plan = build_difficulty_plan(g, now=NOW)
         self.assertTrue(plan.is_cold_start)
 
+    def test_cold_start_mix_is_extremely_easy_weighted(self):
+        """A user's very first-ever recommendations should require
+        extremely low difficulty -- more so than the general beginner mix,
+        which still allows 30% medium / 10% hard."""
+        from pipeline.recommender.services.adaptive_difficulty import MIX_BEGINNER
+        g = _graph()
+        plan = build_difficulty_plan(g, now=NOW)
+        for pool in POOLS:
+            mix = plan.mix_of(pool)
+            self.assertGreaterEqual(mix["easy"], 0.8,
+                                    f"{pool}'s cold-start mix should be heavily easy-weighted")
+            self.assertEqual(mix["hard"], 0.0,
+                             f"{pool} should draw zero hard problems for a user's first-ever recommendations")
+        # strictly gentler than the general beginner mix, not just equal to it
+        self.assertGreater(plan.mix_of("urgency")["easy"], MIX_BEGINNER[0])
+
+    def test_no_solves_with_concepts_also_gets_cold_start_mix(self):
+        """Same extra-gentle mix applies whenever is_cold_start is True,
+        not just the zero-concept-edges case."""
+        g = _graph([_concept("arrays", mastery=0.5)], solved=None)
+        plan = build_difficulty_plan(g, now=NOW)
+        self.assertGreaterEqual(plan.mix_of("difficulty")["easy"], 0.8)
+
 
 class TestSerialization(unittest.TestCase):
 

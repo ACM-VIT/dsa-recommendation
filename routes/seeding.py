@@ -21,7 +21,13 @@ correct while real auth gets plugged in.
 from fastapi import APIRouter, Header, HTTPException
 from controllers.seeding_controller import handle_seed_hlr, handle_seed_bkt
 
-router = APIRouter()
+router = APIRouter(tags=["seeding"])
+
+# No response_model here deliberately -- these handlers return genuinely
+# different shapes per branch (user not found / no linked handle / provider
+# error / success), and forcing one rigid schema would either misrepresent
+# real responses or invent fields that don't exist. See models/schemas/
+# responses.py's module docstring for the same rationale.
 
 
 def require_same_user(path_user_id: str, caller_user_id: str) -> None:
@@ -48,13 +54,21 @@ def require_same_user(path_user_id: str, caller_user_id: str) -> None:
         )
 
 
-@router.post("/seed_hlr/{user_id}")
+@router.post(
+    "/seed_hlr/{user_id}",
+    summary="Seed HLR state from the user's linked Codeforces history",
+    description="Requires X-User-Id header matching user_id (placeholder auth -- see require_same_user).",
+)
 def seed_hlr(user_id: str, caller_user_id: str = Header(None, alias="X-User-Id")):
     require_same_user(user_id, caller_user_id)
     return handle_seed_hlr(user_id)
 
 
-@router.post("/seed_bkt/{user_id}")
+@router.post(
+    "/seed_bkt/{user_id}",
+    summary="Seed BKT mastery from the user's linked LeetCode history",
+    description="Requires X-User-Id header matching user_id (placeholder auth -- see require_same_user).",
+)
 def seed_bkt(user_id: str, caller_user_id: str = Header(None, alias="X-User-Id")):
     require_same_user(user_id, caller_user_id)
     return handle_seed_bkt(user_id)

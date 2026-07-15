@@ -51,6 +51,12 @@ from pipeline.recommender.pools.base_pool import (
     BasePool, Candidate, EASY_BAND, MED_BAND, HARD_BAND, STARTER_CONCEPTS,
 )
 
+# CoursePathPool's unlock-vs-explore quota split (Duolingo-style curriculum
+# priority -- see CoursePathPool.generate()).
+_UNLOCK_BACKLOG_THRESHOLD = 3      # "several" unlock targets still pending
+_UNLOCK_SHARE_WITH_BACKLOG = 0.85  # mostly curriculum-unlock while backlog is large
+_UNLOCK_SHARE_SMALL_BACKLOG = 0.60 # still curriculum-leaning once backlog is small
+
 
 class DifficultyPool(BasePool):
     """
@@ -183,7 +189,16 @@ class CoursePathPool(BasePool):
             return self._draw_with_mix(fallback, n, exclude, mix, graph=graph)
 
         if unlock_targets and explore_targets:
-            unlock_n = (n + 1) // 2
+            # Duolingo-style: exhaust the prerequisite/curriculum-unlock
+            # backlog before leaning into novelty exploration. A user with
+            # several concepts still in-progress or newly unlockable should
+            # mostly see curriculum-unlock candidates; explore only gets a
+            # meaningful share once that backlog is small -- "recommend
+            # prerequisite topics before advanced ones," not a fixed 50/50
+            # split regardless of how much curriculum is left.
+            unlock_share = _UNLOCK_SHARE_WITH_BACKLOG if len(unlock_targets) > _UNLOCK_BACKLOG_THRESHOLD \
+                else _UNLOCK_SHARE_SMALL_BACKLOG
+            unlock_n = round(n * unlock_share)
             explore_n = n - unlock_n
         elif unlock_targets:
             unlock_n, explore_n = n, 0

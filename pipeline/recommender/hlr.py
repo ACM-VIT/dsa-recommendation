@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -10,6 +11,7 @@ from pipeline.recommender.telemetry import compute_telemetry_signal_from_submiss
 # the working directory the process is launched from. Falls back to an empty
 # mapping (with a warning) instead of crashing at import time if the file is
 # missing -- see bkt.py's identical fix for why this must not be a hard crash.
+# Diagnostic output goes to stderr, not stdout -- see bkt.py's identical fix.
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _pt_edges_path = os.path.join(_BASE_DIR, "data", "problem_topic_edges_normalized.json")
 try:
@@ -17,7 +19,7 @@ try:
         pt_edges = json.load(f)
 except FileNotFoundError:
     print(f"[!] {_pt_edges_path} not found -- hlr.py starting with an EMPTY "
-          f"problem->topic mapping.")
+          f"problem->topic mapping.", file=sys.stderr)
     pt_edges = []
     
 problem_to_topics = defaultdict(list)
@@ -29,7 +31,7 @@ MAX_HALF_LIFE = 180.0
 RECALL_THRESHOLD = 0.5
 
 
-def _parse_aware(iso_str):
+def parse_aware_datetime(iso_str):
     """
     Parse an ISO datetime string and guarantee a UTC-aware result.
     Stored states or client payloads can arrive as either:
@@ -129,10 +131,10 @@ def calculate_urgency(hlr_state, current_timestamp):
     if last_review is None:
         return 0.5
 
-    # _parse_aware guarantees a UTC-aware datetime even if last_review
+    # parse_aware_datetime guarantees a UTC-aware datetime even if last_review
     # was stored without timezone info -- fixes the naive/aware subtraction
     # TypeError that previously crashed this function.
-    last_review_dt = _parse_aware(last_review)
+    last_review_dt = parse_aware_datetime(last_review)
     now_dt = datetime.fromtimestamp(current_timestamp, tz=timezone.utc)
     days_since = (now_dt - last_review_dt).total_seconds() / 86400
 
@@ -182,7 +184,7 @@ def process_hlr(submission, user_hlr_state):
             # last_review without timezone info would otherwise crash
             # this subtraction on every subsequent submission for that
             # user/topic, blocking ALL their future HLR updates.
-            last_review_dt = _parse_aware(last_review)
+            last_review_dt = parse_aware_datetime(last_review)
             days_since = (now_dt - last_review_dt).total_seconds() / 86400
         else:
             days_since = 0

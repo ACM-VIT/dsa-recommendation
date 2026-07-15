@@ -1,0 +1,17 @@
+{
+  "userId": "postman_demo_user_2",
+  "problemId": "climbing-stairs",
+  "verdict": "OK",
+  "hintsUsed": 4,
+  "testCasesPassed": 10,
+  "totalTestCases": 10,
+  "submissionCount": 8,
+  "normalisedScore": 0.8,
+  "problemDifficulty": 0.4,
+  "problemTopics": [
+    { "topicId": "dp", "currentMastery": null, "currentHlr": null },
+    { "topicId": "array", "currentMastery": null, "currentHlr": null },
+    { "topicId": "sequence_dp", "currentMastery": null, "currentHlr": null },
+    { "topicId": "tabulation", "currentMastery": null, "currentHlr": null }
+  ]
+}

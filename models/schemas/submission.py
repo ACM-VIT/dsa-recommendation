@@ -42,6 +42,13 @@ class Submission(BaseModel):
     normalisedScore: float = 0.0
     timestamp: float = Field(default_factory=lambda: time.time())
 
+    # Optional 0-1 difficulty rating of the problem just submitted, from the
+    # backend's own Problem table (same "backend already knows this, send
+    # it" pattern as problemTopics below). Omitted -> every difficulty-aware
+    # calculation downstream (telemetry confidence, BKT update dampening)
+    # falls back to its previous difficulty-agnostic behavior exactly.
+    problemDifficulty: Optional[float] = None
+
     # Current mastery/HLR state per topic -- sent by backend, not fetched
     # by ML. Backend knows which topics this problem covers and sends the
     # user's current state for each. ML returns updatedTopics with new values.
@@ -59,6 +66,7 @@ class Submission(BaseModel):
                 "submissionCount": 1,
                 "normalisedScore": 0.95,
                 "timestamp": 1752345600.0,
+                "problemDifficulty": 0.35,
                 "problemTopics": [
                     {
                         "topicId": "array",

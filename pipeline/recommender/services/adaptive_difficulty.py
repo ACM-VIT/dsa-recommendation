@@ -139,10 +139,18 @@ class AdaptiveDifficultyController:
     # ------------------------------------------------------------- signals
 
     def _avg_mastery(self, graph: UserGraph) -> float:
-        edges = list(graph.concept_edges.values())
-        if not edges:
+        """
+        Average CURRENT proficiency (BKT mastery decayed by HLR retention,
+        see UserGraph.effective_proficiency), not raw historical mastery --
+        so the easy/medium/hard mix eases back for a user returning after a
+        break instead of assuming they're still at peak historical skill.
+        This is the Duolingo-style "skills fade if you don't practice"
+        property driving the difficulty curve.
+        """
+        slugs = list(graph.concept_edges.keys())
+        if not slugs:
             return 0.0
-        return sum(e.mastery_score for e in edges) / len(edges)
+        return sum(graph.effective_proficiency(s) for s in slugs) / len(slugs)
 
     def _count_overdue(self, graph: UserGraph) -> int:
         """Concepts whose SM-2 next_review_date is in the past."""

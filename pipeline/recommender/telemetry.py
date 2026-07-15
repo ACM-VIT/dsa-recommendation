@@ -27,6 +27,7 @@ no wire-contract changes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 # Single canonical mastery threshold -- previously duplicated as 0.75 in
 # bkt.py/hlr.py/state_update_service.py but drifted to 0.7 in
@@ -55,13 +56,23 @@ _HINT_PENALTY_FLOOR = 0.6
 
 _FAILED_VERDICT_CAP = 0.35
 
+# Difficulty-credit tuning: harder problems solved well count as slightly
+# stronger evidence of mastery, trivial ones slightly weaker. Deliberately
+# modest (+/-30% at the extremes) -- this is a secondary adjustment on top
+# of raw_perf, not a replacement for it. difficulty=None (the default, and
+# what every existing caller passes) -> credit=1.0, i.e. no change at all
+# from previous behavior.
+_DIFFICULTY_CREDIT_MIN = 0.7
+_DIFFICULTY_CREDIT_MAX = 1.3
+
 
 @dataclass
 class TelemetrySignal:
     """The one shared per-submission performance signal fed to both BKT and HLR."""
     raw_perf: float
     confidence: float
-    value: float   # raw_perf * confidence, capped for non-OK verdicts -- what callers use
+    difficulty_credit: float
+    value: float   # raw_perf * confidence * difficulty_credit, capped for non-OK verdicts -- what callers use
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -75,14 +86,19 @@ def compute_telemetry_signal(
     total_test_cases: int,
     submission_count: int,
     normalised_score: float,
+    difficulty: Optional[float] = None,
 ) -> TelemetrySignal:
     """
     Turn raw submission telemetry into one shared performance signal.
-    Returns a value between 0.0 and 1.0 (in `.value`), plus the raw/confidence
-    breakdown for debugging/explainability.
+    Returns a value between 0.0 and 1.0 (in `.value`), plus the raw/
+    confidence/difficulty-credit breakdown for debugging/explainability.
+
+    `difficulty` (0-1, the solved problem's difficulty score) is optional --
+    omitting it (the default) leaves the signal exactly as it was before
+    difficulty-awareness existed (difficulty_credit=1.0).
     """
     if total_test_cases == 0:
-        return TelemetrySignal(raw_perf=0.0, confidence=1.0, value=0.0)
+        return TelemetrySignal(raw_perf=0.0, confidence=1.0, difficulty_credit=1.0, value=0.0)
 
     # Direct-evidence component (same shape as the old calculate_observed).
     w1 = normalised_score if verdict == "OK" else normalised_score * 0.3
@@ -106,12 +122,26 @@ def compute_telemetry_signal(
     )
     confidence = attempt_confidence * hint_confidence
 
-    value = raw_perf * confidence
+    # Difficulty credit: linear from 0.7x (difficulty=0.0, trivial) to 1.3x
+    # (difficulty=1.0, hard) around a neutral 1.0x at difficulty=0.5.
+    # difficulty=None -> 1.0x, i.e. no-op for every caller that doesn't pass it.
+    if difficulty is None:
+        difficulty_credit = 1.0
+    else:
+        difficulty_credit = _clamp(
+            0.7 + 0.6 * _clamp(difficulty, 0.0, 1.0),
+            _DIFFICULTY_CREDIT_MIN, _DIFFICULTY_CREDIT_MAX,
+        )
+
+    value = raw_perf * confidence * difficulty_credit
     if verdict != "OK":
         value = min(_FAILED_VERDICT_CAP, value)
 
     value = round(min(1.0, max(0.0, value)), 4)
-    return TelemetrySignal(raw_perf=round(raw_perf, 4), confidence=round(confidence, 4), value=value)
+    return TelemetrySignal(
+        raw_perf=round(raw_perf, 4), confidence=round(confidence, 4),
+        difficulty_credit=round(difficulty_credit, 4), value=value,
+    )
 
 
 def compute_telemetry_signal_from_submission(submission: dict) -> TelemetrySignal:
@@ -123,4 +153,5 @@ def compute_telemetry_signal_from_submission(submission: dict) -> TelemetrySigna
         total_test_cases=submission.get("totalTestCases", 1),
         submission_count=submission.get("submissionCount", 1),
         normalised_score=submission.get("normalisedScore", 0.0),
+        difficulty=submission.get("problemDifficulty"),
     )

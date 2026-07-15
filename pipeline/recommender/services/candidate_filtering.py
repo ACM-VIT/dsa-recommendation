@@ -294,11 +294,14 @@ class CandidateFilteringLayer:
     def _default_success_estimator(self, mc: MergedCandidate, graph: UserGraph) -> float:
         """
         Fallback predicted-success estimate when no trained model is supplied.
-        Combines average BKT mastery across the candidate's topic tags with
-        a difficulty-delta penalty -- higher mastery and lower difficulty both
-        raise predicted success. This directly reads Shraddha's BKT mastery
-        scores off the same ConceptEdge objects the rest of the recommender
-        uses (mastery_score is P(L) from her bkt.py, surfaced on the graph).
+        Combines average CURRENT proficiency across the candidate's topic
+        tags (BKT mastery decayed by HLR retention -- see
+        UserGraph.effective_proficiency) with a difficulty-delta penalty --
+        higher proficiency and lower difficulty both raise predicted
+        success. Using proficiency rather than raw historical mastery here
+        means a candidate on a topic the user has forgotten predicts LOWER
+        success, matching their real current ability rather than their
+        peak-ever performance.
 
         Returns a value in (0, 1). Cold-start candidates (no mastery data on
         any of their tags) default to 0.68 -- the diagram's own optimal ZPD
@@ -309,7 +312,7 @@ class CandidateFilteringLayer:
             return ZPD_OPTIMAL
 
         masteries = [
-            graph.concept_edges[t].mastery_score
+            graph.effective_proficiency(t)
             for t in mc.topic_tags
             if t in graph.concept_edges
         ]
@@ -352,8 +355,11 @@ class CandidateFilteringLayer:
         """
         rows = []
         for mc in merged:
+            # effective_proficiency (mastery decayed by HLR retention), not
+            # raw mastery_score -- so the ranker's zpd_fit signal targets
+            # the user's CURRENT real ability, not their historical peak.
             masteries = [
-                self.graph.concept_edges[t].mastery_score
+                self.graph.effective_proficiency(t)
                 for t in mc.topic_tags if t in self.graph.concept_edges
             ]
             urgencies = [

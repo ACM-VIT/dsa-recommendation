@@ -1,0 +1,420 @@
+{
+  "info": {
+    "name": "DSA Recommendation Service",
+    "description": "Online recommendation engine API: submission/state-update, recommendations, mastery/urgency reads, and CF/LC history seeding. This collection is a static snapshot for quick import -- for the always-current schema, import {{base_url}}/openapi.json directly into Postman instead (File > Import > Link).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "user_abc123",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Root",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Telemetry Scenarios",
+      "description": "Six ready-to-send POST /update bodies, one per file in postman/telemetry_samples/, demonstrating each mastery-update mechanism (bounded delta, confidence penalty, wrong-answer cap, difficulty credit, trivial-solve dampening). See POSTMAN_GUIDE.md for expected results and run order.",
+      "item": [
+        {
+          "name": "Scenario 1 - Cold start, easy solve",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"postman_demo_user_1\",\n  \"problemId\": \"two-sum\",\n  \"verdict\": \"OK\",\n  \"hintsUsed\": 0,\n  \"testCasesPassed\": 10,\n  \"totalTestCases\": 10,\n  \"submissionCount\": 1,\n  \"normalisedScore\": 0.95,\n  \"problemDifficulty\": 0.15,\n  \"problemTopics\": [\n    { \"topicId\": \"array\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"hash_map\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"simulation\", \"currentMastery\": null, \"currentHlr\": null }\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "First-ever submission: mastery jumps by the capped MAX_MASTERY_DELTA (0.12), not the much larger raw Bayesian delta."
+          }
+        },
+        {
+          "name": "Scenario 2 - Struggling, many attempts (confidence penalty)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"postman_demo_user_2\",\n  \"problemId\": \"climbing-stairs\",\n  \"verdict\": \"OK\",\n  \"hintsUsed\": 4,\n  \"testCasesPassed\": 10,\n  \"totalTestCases\": 10,\n  \"submissionCount\": 8,\n  \"normalisedScore\": 0.8,\n  \"problemDifficulty\": 0.4,\n  \"problemTopics\": [\n    { \"topicId\": \"dp\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"array\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"sequence_dp\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"tabulation\", \"currentMastery\": null, \"currentHlr\": null }\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "8 submissions + 4 hints despite verdict=OK: telemetry confidence penalty visibly dampens the gain vs a clean solve."
+          }
+        },
+        {
+          "name": "Scenario 3 - Wrong answer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"postman_demo_user_3\",\n  \"problemId\": \"maximum-subarray\",\n  \"verdict\": \"WRONG_ANSWER\",\n  \"hintsUsed\": 1,\n  \"testCasesPassed\": 6,\n  \"totalTestCases\": 10,\n  \"submissionCount\": 2,\n  \"normalisedScore\": 0.6,\n  \"problemDifficulty\": 0.45,\n  \"problemTopics\": [\n    { \"topicId\": \"dp\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"array\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"sequence_dp\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"two_pass_scan\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"in_place_modification\", \"currentMastery\": null, \"currentHlr\": null }\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "verdict=WRONG_ANSWER: signal capped at <=0.35, no BKT learning-transition credit."
+          }
+        },
+        {
+          "name": "Scenario 4 - Moderate-difficulty clean solve",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"postman_demo_user_4\",\n  \"problemId\": \"3sum\",\n  \"verdict\": \"OK\",\n  \"hintsUsed\": 0,\n  \"testCasesPassed\": 10,\n  \"totalTestCases\": 10,\n  \"submissionCount\": 1,\n  \"normalisedScore\": 0.9,\n  \"problemDifficulty\": 0.5,\n  \"problemTopics\": [\n    { \"topicId\": \"array\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"two_pointers\", \"currentMastery\": null, \"currentHlr\": null }\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "difficulty~0.5 -> neutral difficulty_credit (~1.0x), full capped delta."
+          }
+        },
+        {
+          "name": "Scenario 5a - Warm-up before trivial solve",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"postman_demo_user_5\",\n  \"problemId\": \"3sum\",\n  \"verdict\": \"OK\",\n  \"hintsUsed\": 0,\n  \"testCasesPassed\": 10,\n  \"totalTestCases\": 10,\n  \"submissionCount\": 1,\n  \"normalisedScore\": 0.9,\n  \"problemDifficulty\": 0.5,\n  \"problemTopics\": [\n    { \"topicId\": \"array\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"two_pointers\", \"currentMastery\": null, \"currentHlr\": null }\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "Run this BEFORE 5b (same userId) to raise array mastery so 5b has something to be trivial relative to."
+          }
+        },
+        {
+          "name": "Scenario 5b - Trivial-difficulty solve (dampened)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"postman_demo_user_5\",\n  \"problemId\": \"two-sum\",\n  \"verdict\": \"OK\",\n  \"hintsUsed\": 0,\n  \"testCasesPassed\": 10,\n  \"totalTestCases\": 10,\n  \"submissionCount\": 1,\n  \"normalisedScore\": 1.0,\n  \"problemDifficulty\": 0.05,\n  \"problemTopics\": [\n    { \"topicId\": \"array\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"hash_map\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"simulation\", \"currentMastery\": null, \"currentHlr\": null }\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "Run AFTER 5a. Same array topic, problemDifficulty=0.05 well below the now-higher mastery: smaller delta than Scenario 1 despite a perfect score -- this is bkt.py trivial-solve dampening. NOTE: this only shows the dampening effect if 5a ran first AND state persisted between calls (requires reachable Neo4j, or run postman/demo_progression.py instead -- see POSTMAN_GUIDE.md)."
+          }
+        },
+        {
+          "name": "Scenario 6 - Hard stretch solve",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"postman_demo_user_6\",\n  \"problemId\": \"best-time-to-buy-and-sell-stock\",\n  \"verdict\": \"OK\",\n  \"hintsUsed\": 1,\n  \"testCasesPassed\": 9,\n  \"totalTestCases\": 10,\n  \"submissionCount\": 2,\n  \"normalisedScore\": 0.88,\n  \"problemDifficulty\": 0.9,\n  \"problemTopics\": [\n    { \"topicId\": \"array\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"greedy\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"greedy_choice\", \"currentMastery\": null, \"currentHlr\": null },\n    { \"topicId\": \"two_pass_scan\", \"currentMastery\": null, \"currentHlr\": null }\n  ]\n}\n",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "difficulty=0.9 -> strongest difficulty_credit (up to 1.3x); delta still capped the same as every other scenario."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Submission",
+      "item": [
+        {
+          "name": "Record a submission (BKT + HLR update)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{user_id}}\",\n  \"problemId\": \"two-sum\",\n  \"verdict\": \"OK\",\n  \"hintsUsed\": 0,\n  \"testCasesPassed\": 10,\n  \"totalTestCases\": 10,\n  \"submissionCount\": 1,\n  \"normalisedScore\": 0.95,\n  \"timestamp\": 1752345600.0,\n  \"problemDifficulty\": 0.35,\n  \"problemTopics\": [\n    {\n      \"topicId\": \"array\",\n      \"currentMastery\": 0.45,\n      \"currentHlr\": {\n        \"half_life\": 5.0,\n        \"last_review\": \"2026-07-01T00:00:00+00:00\",\n        \"p_recall\": 0.8,\n        \"next_review_days\": 3.5\n      }\n    },\n    {\n      \"topicId\": \"hash_map\",\n      \"currentMastery\": null,\n      \"currentHlr\": null\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "update"
+              ]
+            },
+            "description": "problemDifficulty is optional (0-1) -- omit it to fall back to difficulty-agnostic behavior exactly."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Recommendation",
+      "item": [
+        {
+          "name": "Get recommendations for a user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/recommend/{{user_id}}?limit=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "recommend",
+                "{{user_id}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "1-50, default 10"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Mastery",
+      "item": [
+        {
+          "name": "Get mastery + proficiency for a user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/mastery/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "mastery",
+                "{{user_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get HLR urgency scores for a user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/urgency/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "urgency",
+                "{{user_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Seeding",
+      "item": [
+        {
+          "name": "Seed HLR from Codeforces history",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{user_id}}",
+                "description": "Placeholder auth -- must match the path user_id (see routes/seeding.py::require_same_user)"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seed_hlr/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seed_hlr",
+                "{{user_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Seed BKT from LeetCode history",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{user_id}}",
+                "description": "Placeholder auth -- must match the path user_id (see routes/seeding.py::require_same_user)"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/seed_bkt/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "seed_bkt",
+                "{{user_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Full Pipeline (run_full_pipeline.py reference)",
+      "description": "These are NOT HTTP requests -- run_full_pipeline.py is a standalone CLI script, not exposed over HTTP. This folder documents its request JSON shape (see postman/pipeline_requests/*.json) for reference. Run with: python run_full_pipeline.py --input-json postman/pipeline_requests/submission_then_recommend.json",
+      "item": []
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import logging
 
 import db_env
+from database.postgres.db import get_user_graph_session
 from pipeline.recommender.services.neo4j_graph_store import Neo4jGraphStore
 from pipeline.recommender.services.state_update_service import StateUpdateService
 from pipeline.recommender.services.user_graph_service import UserGraphService
@@ -15,6 +16,8 @@ log = logging.getLogger(__name__)
 
 _qdrant_client = None
 _neo4j_store = None
+_redis_client = None
+_redis_checked = False
 
 
 def _get_qdrant():
@@ -30,6 +33,22 @@ def _get_neo4j_store():
         driver = db_env.neo4j_driver()
         _neo4j_store = Neo4jGraphStore(driver, database=db_env.NEO4J_DATABASE)
     return _neo4j_store
+
+
+def _get_redis():
+    """
+    Lazy singleton, same pattern as _get_qdrant()/_get_neo4j_store(). None
+    if REDIS_URL isn't set or the connection fails -- UserGraphService
+    already treats redis=None as "cache disabled, fall back to Neo4j"
+    gracefully, so this never raises. Only attempted once per process
+    (_redis_checked), not retried on every request, matching how a
+    lazily-built client is expected to behave once initialized.
+    """
+    global _redis_client, _redis_checked
+    if not _redis_checked:
+        _redis_client = db_env.redis_client()
+        _redis_checked = True
+    return _redis_client
 
 
 def _topics_to_updated_list(touched_topics, updated_mastery, updated_hlr):
@@ -63,15 +82,27 @@ def handle_update(submission):
     version -- the only behavioral difference is that what's computed here
     now actually gets persisted instead of being discarded after the
     response is sent.
-    """
-    graph_service = UserGraphService(
-        db=None, redis=None, neo4j=_get_neo4j_store(),
-    )
-    service = StateUpdateService(graph_service, qdrant=_get_qdrant())
 
-    result = service.process_submission(
-        submission.userId, submission.model_dump(), rebuild_vector=False,
-    )
+    Opens a fresh Postgres session for UserGraphService's cold-start
+    bootstrap read (Submission/UserTopicMastery/RecommendationLog/
+    ConceptGapProfile history for users with no Redis/Neo4j state yet) --
+    see get_user_graph_session()'s docstring. None if DATABASE_URL isn't
+    set or the connection fails; UserGraphService degrades to a fresh
+    cold-start graph either way, same as it always has.
+    """
+    db_session = get_user_graph_session()
+    try:
+        graph_service = UserGraphService(
+            db=db_session, redis=_get_redis(), neo4j=_get_neo4j_store(),
+        )
+        service = StateUpdateService(graph_service, qdrant=_get_qdrant())
+
+        result = service.process_submission(
+            submission.userId, submission.model_dump(), rebuild_vector=False,
+        )
+    finally:
+        if db_session is not None:
+            db_session.close()
 
     updated_topics = _topics_to_updated_list(
         result.updated_topics, result.updated_mastery, result.updated_hlr,

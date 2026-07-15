@@ -31,6 +31,7 @@ from enum import Enum
 from typing import Optional
 
 from pipeline.recommender.telemetry import MASTERY_THRESHOLD
+from pipeline.recommender.hlr import recall_probability, MIN_HALF_LIFE
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +176,36 @@ class UserGraph:
     def concept_mastery(self, slug: str) -> float:
         e = self.concept_edges.get(slug)
         return e.mastery_score if e else 0.0
+
+    def effective_proficiency(self, slug: str, now: Optional[float] = None) -> float:
+        """
+        The meaningful "how good is this user at this topic RIGHT NOW"
+        weight: BKT mastery_score (what they've learned, long-term) scaled
+        by HLR recall_probability (how much of it they currently remember,
+        decaying since last practice). A topic mastered months ago but
+        never revisited reads as LESS proficient than its raw mastery_score
+        alone would suggest -- this is the forgetting-curve/Duolingo
+        property: the system should notice skills fade and ease back into
+        them, not assume peak historical performance forever.
+
+        This is a DERIVED signal for ranking/targeting decisions (see
+        adaptive_difficulty.py, candidate_filtering.py, mastery_controller.py)
+        -- it does NOT replace mastery_score as the ground truth for
+        long-term BKT progression (mastered_concepts(), MASTERY_THRESHOLD
+        crossing stay mastery_score-based; a forgotten-but-once-mastered
+        topic is still "mastered" in the BKT sense, it's just due for
+        review -- that's what urgent_concepts()/UrgencyPool are for).
+        """
+        e = self.concept_edges.get(slug)
+        if e is None:
+            return 0.0
+        if e.last_attempted is None:
+            return e.mastery_score   # no recency data yet -- nothing to decay from
+        now = now if now is not None else time.time()
+        days_since = max(0.0, (now - e.last_attempted) / 86400)
+        half_life = e.half_life if e.half_life else MIN_HALF_LIFE
+        recall = recall_probability(half_life, days_since)
+        return round(e.mastery_score * recall, 4)
 
     def recently_exposed(self, problem_id: str, window_days: float = 7.0) -> bool:
         ts = self.exposed_ids.get(problem_id)

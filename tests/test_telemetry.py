@@ -71,3 +71,38 @@ def test_bkt_and_hlr_receive_the_same_signal():
 def test_zero_total_test_cases_returns_zero():
     sig = _signal(total_test_cases=0)
     assert sig.value == 0.0
+
+
+def test_difficulty_none_is_a_noop():
+    with_none = compute_telemetry_signal(
+        verdict="OK", hints_taken=0, test_cases_passed=10, total_test_cases=10,
+        submission_count=1, normalised_score=0.9, difficulty=None,
+    )
+    assert with_none.difficulty_credit == 1.0
+
+
+def test_harder_problem_yields_higher_value_than_easier():
+    easy = compute_telemetry_signal(
+        verdict="OK", hints_taken=0, test_cases_passed=10, total_test_cases=10,
+        submission_count=1, normalised_score=0.9, difficulty=0.05,
+    )
+    hard = compute_telemetry_signal(
+        verdict="OK", hints_taken=0, test_cases_passed=10, total_test_cases=10,
+        submission_count=1, normalised_score=0.9, difficulty=0.95,
+    )
+    assert hard.value > easy.value
+    assert hard.difficulty_credit > 1.0
+    assert easy.difficulty_credit < 1.0
+
+
+def test_difficulty_credit_bounded():
+    sig = compute_telemetry_signal(
+        verdict="OK", hints_taken=0, test_cases_passed=10, total_test_cases=10,
+        submission_count=1, normalised_score=0.9, difficulty=1.0,
+    )
+    assert sig.difficulty_credit <= 1.3
+    sig2 = compute_telemetry_signal(
+        verdict="OK", hints_taken=0, test_cases_passed=10, total_test_cases=10,
+        submission_count=1, normalised_score=0.9, difficulty=0.0,
+    )
+    assert sig2.difficulty_credit >= 0.7

@@ -83,6 +83,22 @@ def _fake_urgency(state, ts):
         return 0.5
 _hlr_stub.calculate_urgency = _fake_urgency
 
+# UserGraph.effective_proficiency() imports recall_probability/MIN_HALF_LIFE
+# from pipeline.recommender.hlr at module load time -- this stub must expose
+# real (not fake) implementations of those two, or importing user_graph.py
+# while this stub is active (e.g. running this test file in isolation, where
+# nothing else has imported the real hlr.py first) raises ImportError.
+# Mirrors hlr.py's actual implementation exactly (simple power-law formula,
+# no dependencies on anything else in that module).
+_hlr_stub.MIN_HALF_LIFE = 1.0
+
+def _fake_recall_probability(half_life, days_since_review):
+    if days_since_review <= 0:
+        return 1.0
+    return round(2 ** (-days_since_review / half_life), 4)
+
+_hlr_stub.recall_probability = _fake_recall_probability
+
 # stub qdrant_client.models classes used at import time
 _qm = sys.modules["qdrant_client.models"]
 for _cls in ["Filter", "FieldCondition", "MatchAny", "MatchValue",
@@ -178,7 +194,7 @@ def _make_db(
 
 def _mastery_row(
     topic_id,
-    mastery_score=50.0,
+    mastery_score=0.5,
     confidence="medium",
     attempt_count=5,
     problems_solved=3,
@@ -190,6 +206,12 @@ def _mastery_row(
     # Must match exactly the 9 columns in _load_topic_mastery SELECT:
     # topic_id, mastery_score, confidence, attempt_count, problems_solved,
     # last_attempted, sm2_ef, sm2_interval, next_review_date
+    #
+    # mastery_score is 0-1 here, matching the REAL user_topic_mastery
+    # schema (verified directly: range 0.203-0.998) -- _load_topic_mastery
+    # no longer divides by 100 (that assumed a 0-100 scale which doesn't
+    # exist in the real DB and was silently shrinking every loaded mastery
+    # value to ~1/100th of its real value).
     return (
         topic_id, mastery_score, confidence,
         attempt_count, problems_solved,
@@ -335,14 +357,14 @@ class TestGraphAssembly(unittest.TestCase):
 
     def test_mastered_edge_high_mastery(self):
         g = self._build(mastery_rows=[
-            _mastery_row("arrays", mastery_score=80.0),
+            _mastery_row("arrays", mastery_score=0.8),
         ])
         self.assertIn("arrays", g.concept_edges)
         self.assertEqual(g.concept_edges["arrays"].edge_type, EdgeType.MASTERED)
 
     def test_learning_edge_mid_mastery(self):
         g = self._build(mastery_rows=[
-            _mastery_row("graphs", mastery_score=50.0),
+            _mastery_row("graphs", mastery_score=0.5),
         ])
         self.assertEqual(g.concept_edges["graphs"].edge_type, EdgeType.LEARNING)
 
@@ -354,26 +376,26 @@ class TestGraphAssembly(unittest.TestCase):
 
     def test_confidence_mapped_low(self):
         g = self._build(mastery_rows=[
-            _mastery_row("arrays", mastery_score=75.0, confidence="low"),
+            _mastery_row("arrays", mastery_score=0.75, confidence="low"),
         ])
         self.assertAlmostEqual(g.concept_edges["arrays"].confidence, 0.33)
 
     def test_confidence_mapped_medium(self):
         g = self._build(mastery_rows=[
-            _mastery_row("arrays", mastery_score=75.0, confidence="medium"),
+            _mastery_row("arrays", mastery_score=0.75, confidence="medium"),
         ])
         self.assertAlmostEqual(g.concept_edges["arrays"].confidence, 0.66)
 
     def test_confidence_mapped_high(self):
         g = self._build(mastery_rows=[
-            _mastery_row("arrays", mastery_score=75.0, confidence="high"),
+            _mastery_row("arrays", mastery_score=0.75, confidence="high"),
         ])
         self.assertAlmostEqual(g.concept_edges["arrays"].confidence, 1.0)
 
     def test_bkt_store_overrides_db_mastery(self):
         bkt = {USER_ID: {"arrays": 0.9}}
         db  = _make_db(mastery_rows=[
-            _mastery_row("arrays", mastery_score=50.0),
+            _mastery_row("arrays", mastery_score=0.5),
         ])
         svc = UserGraphService(db=db, redis=None, bkt=bkt, hlr={})
         g   = svc.get(USER_ID)
@@ -383,7 +405,7 @@ class TestGraphAssembly(unittest.TestCase):
         hlr_state = {"half_life": 7.0, "last_review": "2025-01-01T00:00:00+00:00"}
         hlr = {USER_ID: {"arrays": hlr_state}}
         db  = _make_db(mastery_rows=[
-            _mastery_row("arrays", mastery_score=75.0),
+            _mastery_row("arrays", mastery_score=0.75),
         ])
         svc = UserGraphService(db=db, redis=None, bkt={}, hlr=hlr)
         g   = svc.get(USER_ID)
@@ -397,7 +419,7 @@ class TestGraphAssembly(unittest.TestCase):
 
     def test_gap_severity_merged_onto_existing_edge(self):
         g = self._build(
-            mastery_rows=[_mastery_row("arrays", mastery_score=75.0)],
+            mastery_rows=[_mastery_row("arrays", mastery_score=0.75)],
             gap_rows=[_gap_row("arrays", severity=0.8)],
         )
         self.assertAlmostEqual(g.concept_edges["arrays"].severity, 0.8)
@@ -413,7 +435,7 @@ class TestGraphAssembly(unittest.TestCase):
 
     def test_weak_edge_on_high_severity(self):
         g = self._build(
-            mastery_rows=[_mastery_row("arrays", mastery_score=75.0)],
+            mastery_rows=[_mastery_row("arrays", mastery_score=0.75)],
             gap_rows=[_gap_row("arrays", severity=0.7)],
         )
         self.assertEqual(g.concept_edges["arrays"].edge_type, EdgeType.WEAK)
@@ -429,7 +451,7 @@ class TestGraphAssembly(unittest.TestCase):
             ConceptConceptEdge("arrays", "sorting", EdgeType.COOCCURS, 0.5)
         ]
         g = self._build(mastery_rows=[
-            _mastery_row("arrays", mastery_score=75.0),
+            _mastery_row("arrays", mastery_score=0.75),
         ])
         self.assertIn("arrays", g.cc_edges)
         self.assertEqual(g.cc_edges["arrays"][0].target_slug, "sorting")
@@ -453,7 +475,7 @@ class TestGraphAssembly(unittest.TestCase):
         ]
         # user has no mastery on "graphs" at all
         g = self._build(mastery_rows=[
-            _mastery_row("arrays", mastery_score=75.0),
+            _mastery_row("arrays", mastery_score=0.75),
         ])
         self.assertIn("graphs", g.cc_edges)
         # and the lock check must actually see it
@@ -466,8 +488,8 @@ class TestGraphAssembly(unittest.TestCase):
 
     def test_mastered_concepts(self):
         g = self._build(mastery_rows=[
-            _mastery_row("arrays",  mastery_score=80.0),
-            _mastery_row("sorting", mastery_score=50.0),
+            _mastery_row("arrays",  mastery_score=0.8),
+            _mastery_row("sorting", mastery_score=0.5),
         ])
         mastered = g.mastered_concepts()
         self.assertIn("arrays",  mastered)
@@ -475,7 +497,7 @@ class TestGraphAssembly(unittest.TestCase):
 
     def test_weak_concepts(self):
         g = self._build(
-            mastery_rows=[_mastery_row("arrays", mastery_score=75.0)],
+            mastery_rows=[_mastery_row("arrays", mastery_score=0.75)],
             gap_rows=[_gap_row("arrays", severity=0.7)],
         )
         self.assertIn("arrays", g.weak_concepts())
@@ -485,10 +507,70 @@ class TestGraphAssembly(unittest.TestCase):
             "half_life": 1.0,
             "last_review": "2020-01-01T00:00:00+00:00",  # very old
         }}}
-        db = _make_db(mastery_rows=[_mastery_row("arrays", mastery_score=75.0)])
+        db = _make_db(mastery_rows=[_mastery_row("arrays", mastery_score=0.75)])
         svc = UserGraphService(db=db, redis=None, bkt={}, hlr=hlr)
         g = svc.get(USER_ID)
         self.assertIn("arrays", g.urgent_concepts())
+
+
+# ===========================================================================
+# effective_proficiency: mastery decayed by HLR recall probability
+# ===========================================================================
+
+class TestEffectiveProficiency(unittest.TestCase):
+
+    def _graph(self, mastery=0.8, half_life=5.0, last_attempted=None):
+        g = UserGraph(user=UserNode(user_id="u1"))
+        g.add_concept_edge(ConceptEdge(
+            "arrays", EdgeType.MASTERED, mastery_score=mastery,
+            half_life=half_life, last_attempted=last_attempted,
+        ))
+        return g
+
+    def test_missing_concept_is_zero(self):
+        g = UserGraph(user=UserNode(user_id="u1"))
+        self.assertEqual(g.effective_proficiency("arrays"), 0.0)
+
+    def test_no_recency_data_falls_back_to_raw_mastery(self):
+        g = self._graph(mastery=0.8, last_attempted=None)
+        self.assertEqual(g.effective_proficiency("arrays"), 0.8)
+
+    def test_freshly_practiced_stays_close_to_raw_mastery(self):
+        g = self._graph(mastery=0.8, half_life=5.0, last_attempted=time.time())
+        self.assertAlmostEqual(g.effective_proficiency("arrays"), 0.8, places=2)
+
+    def test_stale_practice_decays_below_raw_mastery(self):
+        g = self._graph(mastery=0.8, half_life=5.0,
+                        last_attempted=time.time() - 30 * 86400)
+        proficiency = g.effective_proficiency("arrays")
+        self.assertLess(proficiency, 0.8)
+        self.assertGreaterEqual(proficiency, 0.0)
+
+    def test_never_exceeds_raw_mastery(self):
+        for days_ago in (0, 1, 10, 100):
+            g = self._graph(mastery=0.7, half_life=3.0,
+                            last_attempted=time.time() - days_ago * 86400)
+            self.assertLessEqual(g.effective_proficiency("arrays"), 0.7 + 1e-9)
+
+    def test_longer_half_life_decays_more_slowly(self):
+        stale_ts = time.time() - 20 * 86400
+        short_hl = self._graph(mastery=0.8, half_life=2.0, last_attempted=stale_ts)
+        long_hl  = self._graph(mastery=0.8, half_life=30.0, last_attempted=stale_ts)
+        self.assertGreater(
+            long_hl.effective_proficiency("arrays"),
+            short_hl.effective_proficiency("arrays"),
+        )
+
+    def test_does_not_affect_mastered_concepts_ground_truth(self):
+        """
+        mastered_concepts() must stay mastery_score-based -- a
+        forgotten-but-once-mastered topic is still "mastered" in the BKT
+        sense (it's due for review, not for re-learning from scratch).
+        """
+        g = self._graph(mastery=0.9, half_life=1.0,
+                        last_attempted=time.time() - 365 * 86400)
+        self.assertLess(g.effective_proficiency("arrays"), 0.1)   # heavily decayed
+        self.assertIn("arrays", g.mastered_concepts())            # still mastered
 
 
 # ===========================================================================

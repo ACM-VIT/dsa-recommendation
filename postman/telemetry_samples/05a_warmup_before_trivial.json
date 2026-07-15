@@ -1,0 +1,15 @@
+{
+  "userId": "postman_demo_user_5",
+  "problemId": "3sum",
+  "verdict": "OK",
+  "hintsUsed": 0,
+  "testCasesPassed": 10,
+  "totalTestCases": 10,
+  "submissionCount": 1,
+  "normalisedScore": 0.9,
+  "problemDifficulty": 0.5,
+  "problemTopics": [
+    { "topicId": "array", "currentMastery": null, "currentHlr": null },
+    { "topicId": "two_pointers", "currentMastery": null, "currentHlr": null }
+  ]
+}

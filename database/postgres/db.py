@@ -1,8 +1,12 @@
+import logging
 import os
+import re
 import psycopg2
 from pathlib import Path
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+
+log = logging.getLogger(__name__)
 
 # Walk up from this file to find the repo root .env -- works regardless
 # of what directory uvicorn is launched from.
@@ -21,6 +25,65 @@ def get_connection():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL environment variable is not set")
     return psycopg2.connect(DATABASE_URL)
+
+
+class _SQLAlchemyLikeSession:
+    """
+    Adapter so a raw psycopg2 connection can satisfy the SQLAlchemy
+    Connection-style calling convention
+    pipeline/recommender/services/user_graph_service.py::UserGraphService
+    was written against:
+        db.execute(sql_with_:named_params, params_dict).fetchone()/.fetchall()
+
+    This repo has never had SQLAlchemy as a dependency (confirmed: no
+    `create_engine`/`sessionmaker` anywhere) -- only psycopg2, which uses
+    `%(name)s`-style bind params and returns a plain cursor, not a
+    chainable result object. Rather than adding a whole ORM dependency
+    just to satisfy one interface UserGraphService already expects,
+    this translates `:name` -> `%(name)s` and returns the cursor itself
+    (psycopg2 cursors already support .fetchone()/.fetchall() natively).
+
+    Read-only by construction -- UserGraphService only ever SELECTs
+    through `db` (see its module docstring: ML never writes to Postgres).
+    """
+    _PARAM_RE = re.compile(r":(\w+)\b")
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=None):
+        cur = self._conn.cursor()
+        translated = self._PARAM_RE.sub(r"%(\1)s", sql)
+        cur.execute(translated, params or {})
+        return cur
+
+    def close(self):
+        self._conn.close()
+
+
+def get_user_graph_session():
+    """
+    Returns a fresh `_SQLAlchemyLikeSession` wrapping a fresh psycopg2
+    connection, for UserGraphService's `db=` param -- or None if
+    DATABASE_URL isn't set or the connection fails. UserGraphService
+    already treats db=None gracefully (falls back to a cold-start graph
+    when the user lookup fails), same degrade-gracefully contract as
+    db_env.py's neo4j_driver()/redis_client().
+
+    Opens a FRESH connection per call (not a singleton/pool) -- matches
+    every other function in this file (get_connection() is always called
+    fresh, never cached), and psycopg2 connections aren't safe for
+    concurrent use across threads, which FastAPI's sync `def` handlers can
+    do. Caller is responsible for calling .close() on the returned session
+    when done (see submission_controller.py/recommendation_controller.py).
+    """
+    if not DATABASE_URL:
+        return None
+    try:
+        return _SQLAlchemyLikeSession(get_connection())
+    except Exception as exc:
+        log.warning("Postgres connection failed for UserGraphService read path: %s", exc)
+        return None
 
 
 def get_user_mastery(user_id: str) -> dict:

@@ -1,0 +1,18 @@
+{
+  "userId": "postman_demo_user_3",
+  "problemId": "maximum-subarray",
+  "verdict": "WRONG_ANSWER",
+  "hintsUsed": 1,
+  "testCasesPassed": 6,
+  "totalTestCases": 10,
+  "submissionCount": 2,
+  "normalisedScore": 0.6,
+  "problemDifficulty": 0.45,
+  "problemTopics": [
+    { "topicId": "dp", "currentMastery": null, "currentHlr": null },
+    { "topicId": "array", "currentMastery": null, "currentHlr": null },
+    { "topicId": "sequence_dp", "currentMastery": null, "currentHlr": null },
+    { "topicId": "two_pass_scan", "currentMastery": null, "currentHlr": null },
+    { "topicId": "in_place_modification", "currentMastery": null, "currentHlr": null }
+  ]
+}

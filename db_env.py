@@ -1,18 +1,21 @@
 """
 db_env.py
 
-Single source of truth for every Qdrant and Neo4j credential used across
-the whole repo. Every file that touches either database gets its
-credentials FROM HERE -- directly (imports this module) or indirectly
-(imports pipeline/graphs/config.py, which itself imports this module).
-No file should hardcode a URL, password, or fall back to a bare
+Single source of truth for every Qdrant, Neo4j, Postgres, and Redis
+credential used across the whole repo. Every file that touches any of
+these gets its credentials FROM HERE -- directly (imports this module) or
+indirectly (imports pipeline/graphs/config.py, which itself imports this
+module). No file should hardcode a URL, password, or fall back to a bare
 os.environ.get() of its own -- this is the one place .env gets parsed.
 
-PostgreSQL is intentionally NOT read here. The ML repo never connects to
-Postgres directly for writes -- backend owns every write to every
-Postgres table. The one place ML reads Postgres (UserGraphService's
-SELECT-only queries) takes a `db` session object passed in by the caller,
-not a credential this module would own.
+DATABASE_URL is surfaced here for visibility/centralization (`describe()`
+below, and so every credential lives in one documented place), but the ML
+repo still never WRITES to Postgres directly -- backend owns every write.
+The one place ML reads Postgres (UserGraphService's SELECT-only queries)
+takes a `db` session object passed in by the caller, not a raw URL; see
+`database/postgres/db.py` for the actual psycopg2 connection factory this
+module's DATABASE_URL constant is read from (kept in sync, not duplicated
+config -- see that file's own .env loading for why it's independent).
 
 Where the values actually come from:
 
@@ -31,6 +34,15 @@ Where the values actually come from:
         NEO4J_DATABASE         usually "neo4j" (Aura's default database name)
         AURA_INSTANCEID        (aliased as NEO4J_INSTANCEID too, either works)
         AURA_INSTANCENAME      (aliased as NEO4J_INSTANCENAME too, either works)
+
+    Postgres (backend-owned, e.g. Supabase/RDS connection string):
+        DATABASE_URL            e.g. postgresql://user:pass@host:5432/dbname
+
+    Redis (fast-tier UserGraph cache -- optional; None/unreachable
+    degrades gracefully to Neo4j-only durability, same pattern as Neo4j
+    degrading to cold-start-only):
+        REDIS_URL                e.g. redis://:password@host:6379/0
+                                  or rediss://... for TLS (e.g. managed Redis)
 """
 
 from __future__ import annotations
@@ -97,6 +109,16 @@ NEO4J_DATABASE     = os.environ.get("NEO4J_DATABASE", "neo4j")
 NEO4J_INSTANCEID   = os.environ.get("NEO4J_INSTANCEID")   or os.environ.get("AURA_INSTANCEID")
 NEO4J_INSTANCENAME = os.environ.get("NEO4J_INSTANCENAME") or os.environ.get("AURA_INSTANCENAME")
 
+# ---------------------------------------------------------------------------
+# Postgres (backend-owned -- ML never writes here, see module docstring)
+# ---------------------------------------------------------------------------
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+# ---------------------------------------------------------------------------
+# Redis (fast-tier UserGraph cache -- optional)
+# ---------------------------------------------------------------------------
+REDIS_URL = os.environ.get("REDIS_URL")
+
 
 # ---------------------------------------------------------------------------
 # Convenience factories -- every script should use these instead of
@@ -160,6 +182,36 @@ def neo4j_driver():
         return None
 
 
+def redis_client(socket_timeout: int = 5):
+    """
+    Returns a connected Redis client, or None if REDIS_URL isn't set or the
+    connection fails. Callers should treat None as "Redis disabled for this
+    run" -- matches UserGraphService's existing no-op behaviour when
+    redis=None (falls back to Neo4j, or a fresh cold-start graph if that's
+    also unavailable), never a crash. Same degrade-gracefully pattern as
+    neo4j_driver() above.
+    """
+    if not REDIS_URL:
+        return None
+    try:
+        import redis
+    except ModuleNotFoundError:
+        import logging
+        logging.getLogger(__name__).error(
+            "redis package not installed -- Redis fast-tier caching disabled. "
+            "Run: uv add redis  (or confirm redis>=5.0.0 is in pyproject.toml "
+            "and re-run: uv lock && uv sync)"
+        )
+        return None
+    try:
+        client = redis.Redis.from_url(REDIS_URL, socket_timeout=socket_timeout,
+                                       decode_responses=False)
+        client.ping()
+        return client
+    except Exception:
+        return None
+
+
 def describe() -> dict:
     """Non-secret summary for logging/debugging -- never includes the API key or password."""
     return {
@@ -175,4 +227,6 @@ def describe() -> dict:
         "neo4j_instanceid":      NEO4J_INSTANCEID,
         "neo4j_instancename":    NEO4J_INSTANCENAME,
         "neo4j_password_set":    bool(NEO4J_PASSWORD),
+        "database_url_set":      bool(DATABASE_URL),
+        "redis_url_set":         bool(REDIS_URL),
     }

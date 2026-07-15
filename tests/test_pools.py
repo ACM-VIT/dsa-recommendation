@@ -154,6 +154,41 @@ class TestCoursePath(unittest.TestCase):
         cands = pool.generate(g, _StubState(None, g), n=10)
         self.assertTrue(any("trees" in c.problem_id for c in cands))
 
+    def test_unlock_backlog_biases_quota_away_from_explore(self):
+        """
+        Duolingo-style: with several unlock targets still pending (>3), the
+        quota split should heavily favor unlock over explore -- NOT a flat
+        50/50 -- so the user works through the curriculum backlog before
+        novelty exploration gets a meaningful share. Give both target sets
+        abundant candidates so the split itself (not data scarcity) is what
+        limits how many of each come back.
+        """
+        unlock_topics = ["arrays", "graphs", "trees", "dp", "strings"]
+        problems = []
+        for t in unlock_topics:
+            for i in range(5):
+                problems.append(_Pt(f"{t}_{i}", [t], 0.5))
+        for i in range(25):
+            problems.append(_Pt(f"greedy_{i}", ["greedy"], 0.5))
+
+        concepts = [_concept(t, mastery=0.5) for t in unlock_topics]  # in-progress, unlock targets
+        concepts.append(_concept("hash_map", mastery=0.8, edge_type=EdgeType.MASTERED))
+        g = _graph(
+            concepts, solved=[],
+            # COOCCURS, not PREREQ -- PREREQ from a mastered concept would
+            # also make "greedy" an unlock target, defeating the point of
+            # this test (isolating pure explore-only targets).
+            cc=[ConceptConceptEdge("hash_map", "greedy", EdgeType.COOCCURS, 1.0)],
+        )
+        pool = CoursePathPool(qdrant=FakeQdrant(problems))
+        cands = pool.generate(g, _StubState(None, g), n=10)
+
+        unlock_count = sum(1 for c in cands if set(c.topic_tags) & set(unlock_topics))
+        explore_count = sum(1 for c in cands if "greedy" in c.topic_tags)
+        self.assertGreater(unlock_count, explore_count)
+        self.assertGreaterEqual(unlock_count, 7,
+                                "unlock share should dominate a large backlog, not split ~50/50")
+
     def test_empty_when_no_unlock_and_no_explore_targets(self):
         """Mastered concept with no cc_edges at all: nothing in progress, nothing
         to unlock, nothing to explore -- and STARTER_CONCEPTS fallback only

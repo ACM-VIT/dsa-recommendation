@@ -1,0 +1,17 @@
+{
+  "userId": "postman_demo_user_6",
+  "problemId": "best-time-to-buy-and-sell-stock",
+  "verdict": "OK",
+  "hintsUsed": 1,
+  "testCasesPassed": 9,
+  "totalTestCases": 10,
+  "submissionCount": 2,
+  "normalisedScore": 0.88,
+  "problemDifficulty": 0.9,
+  "problemTopics": [
+    { "topicId": "array", "currentMastery": null, "currentHlr": null },
+    { "topicId": "greedy", "currentMastery": null, "currentHlr": null },
+    { "topicId": "greedy_choice", "currentMastery": null, "currentHlr": null },
+    { "topicId": "two_pass_scan", "currentMastery": null, "currentHlr": null }
+  ]
+}

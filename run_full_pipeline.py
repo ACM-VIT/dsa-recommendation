@@ -14,13 +14,29 @@ REQUEST (stdin, or --input-json <file>, or CLI flags for quick manual runs):
       "user_id":      "string, required",
       "k":             10,
       "total_n":       30,
-      "session_mode":  "practice"
+      "session_mode":  "practice",
+      "submission":    { ... optional Submission-schema object, see below ... }
     }
+
+    If "submission" is present, it's run through StateUpdateService (BKT +
+    HLR + canonical UserGraph write-through -- the same path POST /update
+    uses) BEFORE recommendations are generated, so this one script
+    demonstrates the full submission -> state-update -> recommend loop, not
+    just recommend-on-existing-state. "submission" must match the Submission
+    schema (models/schemas/submission.py): userId, problemId, verdict,
+    hintsUsed, testCasesPassed, totalTestCases, submissionCount,
+    normalisedScore, problemDifficulty (optional 0-1), problemTopics.
+    submission.userId is ignored in favor of the top-level "user_id" if both
+    are present (top-level is authoritative, matching how the API's own
+    routes work -- POST /update takes userId from the body, GET /recommend
+    takes it from the path).
 
 RESPONSE (stdout -- ALWAYS pure JSON, nothing else on stdout):
     {
       "user_id": "string",
       "session_mode": "practice" | "learning" | null,
+      "state_update": { ... same shape as POST /update's response, only
+                         present if "submission" was in the request ... },
       "recommendations": [
         {
           "problem_id":       "string",
@@ -40,6 +56,11 @@ Usage:
     echo '{"user_id": "u1", "k": 5}' | python run_full_pipeline.py
     python run_full_pipeline.py --input-json request.json
     python run_full_pipeline.py u1 --k 5
+
+    # Full submission -> state-update -> recommend loop, see postman/
+    # pipeline_requests/submission_then_recommend.json for a ready-made
+    # example:
+    python run_full_pipeline.py --input-json postman/pipeline_requests/submission_then_recommend.json
 
 Flags:
     --input-json FILE  Read the JSON request from this file instead of stdin/CLI.
@@ -255,6 +276,69 @@ def resolve_recommendations(result_dict: dict, qdrant, collection: str = "proble
 # Core: request dict -> response dict
 # ---------------------------------------------------------------------------
 
+class _InProcessCache:
+    """
+    Minimal dict-backed stand-in for the .get/.setex/.delete interface
+    UserGraphService expects from a Redis client. Shared between the
+    submission step and the recommendation step below so a submission
+    processed earlier in THIS SINGLE RUN is visible to the recommendation
+    step that follows it, even when no real Redis is configured and Neo4j
+    is unreachable (e.g. no outbound network access). This is NOT a
+    substitute for real Redis in a multi-process deployment -- it only
+    lives for the duration of one `python run_full_pipeline.py` invocation
+    -- just enough to make this one script's submission -> recommend demo
+    self-consistent regardless of infra availability.
+    """
+    def __init__(self):
+        self._store: dict = {}
+
+    def get(self, key):
+        return self._store.get(key)
+
+    def setex(self, key, ttl, value):
+        self._store[key] = value
+
+    def delete(self, key):
+        self._store.pop(key, None)
+
+
+def apply_submission(user_id: str, submission: dict, neo4j_store, qdrant, redis) -> dict:
+    """
+    Route an optional "submission" through StateUpdateService -- the same
+    canonical path POST /update uses (BKT + HLR update, written through to
+    the UserGraph via Redis + Neo4j). Returns the same shape
+    submission_controller.py::handle_update returns, so this script's
+    "state_update" field matches the real API response exactly.
+    """
+    from pipeline.recommender.services.state_update_service import StateUpdateService
+    from pipeline.recommender.services.user_graph_service import UserGraphService
+
+    graph_service = UserGraphService(db=None, redis=redis, neo4j=neo4j_store)
+    service = StateUpdateService(graph_service, qdrant=qdrant)
+
+    submission_dict = dict(submission)
+    submission_dict.setdefault("verdict", "OK")
+    submission_dict["userId"] = user_id   # top-level user_id is authoritative
+
+    result = service.process_submission(user_id, submission_dict, rebuild_vector=False)
+
+    updated_topics = [
+        {
+            "topicId": t,
+            "updatedMastery": result.updated_mastery.get(t),
+            "updatedHlr": result.updated_hlr.get(t),
+        }
+        for t in result.updated_topics
+    ]
+    return {
+        "userId": user_id,
+        "problemId": str(submission_dict.get("problemId", "")),
+        "updatedTopics": updated_topics,
+        "masteredTopics": result.newly_mastered,
+        "results": {"bkt": result.bkt_results, "hlr": result.hlr_results},
+    }
+
+
 def handle_request(request: dict) -> dict:
     user_id = request.get("user_id")
     if not user_id:
@@ -263,6 +347,7 @@ def handle_request(request: dict) -> dict:
     k = request.get("k", 10)
     total_n = request.get("total_n", 30)
     session_mode = request.get("session_mode")
+    submission = request.get("submission")
     force_offline = request.get("force_offline", False)
     skip_offline = request.get("skip_offline", False)
     no_neo4j = request.get("no_neo4j", False)
@@ -274,24 +359,40 @@ def handle_request(request: dict) -> dict:
 
     qdrant = db_env.qdrant_client(timeout=10)
 
-    # BKT/HLR stores and db session are owned by the backend, not this
-    # script. This demo runs with empty stores and db=None (cold-start
-    # path). In production, the backend controller passes its own
-    # bkt_store, hlr_store, and db session into get_recommendations()
-    # directly -- the ML service never connects to Postgres itself.
+    # Shared for the duration of this run only -- see _InProcessCache's
+    # docstring. If Neo4j is reachable, its durable state is used too (and
+    # would carry across separate invocations); this cache just guarantees
+    # same-run consistency regardless of that.
+    in_process_cache = _InProcessCache()
+
+    state_update_response = None
+    if submission is not None:
+        _log(f"\n[->] Processing submission for problemId={submission.get('problemId')} "
+             f"before generating recommendations...")
+        state_update_response = apply_submission(
+            user_id, submission, neo4j_store, qdrant, redis=in_process_cache)
+        _log(f"[OK] State update complete: "
+             f"{len(state_update_response['updatedTopics'])} topic(s) touched, "
+             f"{len(state_update_response['masteredTopics'])} newly mastered.")
+
+    # BKT/HLR stores are legacy get_recommendations() params, kept for
+    # backward compatibility -- the canonical read path is now UserGraph
+    # (via neo4j_store + in_process_cache above), which apply_submission()
+    # just wrote through to if a submission was processed this run.
     bkt_store: dict = {}
     hlr_store: dict = {}
     db = None
-    conn = None
 
     result = get_recommendations(
-        user_id=user_id, db=db, redis=None, neo4j=neo4j_store, qdrant=qdrant,
+        user_id=user_id, db=db, redis=in_process_cache, neo4j=neo4j_store, qdrant=qdrant,
         bkt_store=bkt_store, hlr_store=hlr_store,
         collection="problems_full", total_n=total_n, k=k,
     )
     response = result.to_dict()
     response = resolve_recommendations(response, qdrant, collection="problems_full")
     response["session_mode"] = session_mode
+    if state_update_response is not None:
+        response["state_update"] = state_update_response
     return response
 
 

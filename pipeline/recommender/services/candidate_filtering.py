@@ -1,12 +1,11 @@
 """
 Candidate filtering layer.
 
-Sits between the 7 candidate pools and the ranker (Shraddha's LightGBM /
-scoring layer). Per the architecture diagram:
+Sits between the 4 candidate pools and the ranker. Per the architecture:
 
-    pool A, B_C, D, E, F, G, vector
+    pool difficulty, vector, course_path, urgency
         --(each pool's raw candidates, already difficulty-banded)-->
-    per-pool filter: removes too hard/easy, solved, missing prereqs
+    per-pool filter: removes solved, deprioritised, locked, missing prereqs
         -->
     CANDIDATE FILTERING:
         - each pool sends {problem_id: pool_name} into a local object
@@ -17,30 +16,34 @@ scoring layer). Per the architecture diagram:
         -->
     filter to 55-80% predicted success (optimal ~68%, the ZPD band)
         -->
-    Shraddha's ranker / scoring engine
+    ranker / scoring engine
 
 This module owns everything up to and including the ZPD band filter. It does
 NOT rank or score candidates for final ordering -- that is the ranker's job.
 It DOES need a predicted-success estimate to apply the ZPD filter; a simple
-BKT-mastery-based estimator is provided as a default, since Shraddha's BKT
-mastery scores are already present on every ConceptEdge in the UserGraph
-(same store this whole recommender reads from). If a real trained
+BKT-mastery-based estimator is provided as a default, since BKT mastery
+scores are already present on every ConceptEdge in the UserGraph (same
+store this whole recommender reads from). If a real trained
 success-probability model exists later, pass it in via
 `success_estimator=` and this layer will use that instead.
 
-This is the connection point to Shraddha's recommendation engine: every
-mastery/urgency number used here comes directly from the same UserGraph her
-BKT/HLR stores populate (via UserGraphService) -- no separate data source.
+Every mastery/urgency number used here comes directly from the same
+UserGraph the BKT/HLR update path populates (via UserGraphService) -- no
+separate data source.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from pipeline.recommender.models.user_graph import UserGraph, EdgeType
 from pipeline.recommender.pools.base_pool import Candidate
+from pipeline.recommender.telemetry import MASTERY_THRESHOLD
+
+log = logging.getLogger(__name__)
 
 
 # Locked / eligibility ------------------------------------------------------
@@ -55,11 +58,63 @@ ZPD_HI      = 0.80
 ZPD_OPTIMAL = 0.68
 
 
+# ---------------------------------------------------------------------------
+# Prerequisite hard gate -- ported from the formerly dead-code ranking.py
+# (rank_candidates was never imported/called anywhere in the live path; its
+# ZPD-fit and variety scoring moved to heuristic_ranker.py, and this
+# prerequisite check moves here). This is deliberately a HARD FILTER, not a
+# ranking signal -- "what can appear at all" and "how what appears gets
+# ordered" stay separate. It checks the backend's own `topic_prerequisite`
+# Postgres table, which is a SEPARATE source of truth from the offline
+# concept graph's cc_edges PREREQ edges that UserGraph.is_locked() (used in
+# _filter_pool below) already checks. Both run: is_locked() keeps pools from
+# generating obviously-locked candidates in the first place (efficiency,
+# uses the graph pools already have in hand); this table check is the
+# authoritative final gate against the backend's canonical prerequisite
+# data, run once here regardless of which pool a candidate came from.
+# ---------------------------------------------------------------------------
+
+_PREREQ_TABLE_CACHE: Optional[dict] = None
+
+
+def _load_prerequisite_table() -> dict:
+    """{topic_id: [prerequisite_topic_id, ...]} from Postgres topic_prerequisite."""
+    from database.postgres.db import get_connection
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT topic_id, prerequisite_id FROM topic_prerequisite")
+            rows = cur.fetchall()
+        prereqs: dict = {}
+        for topic_id, prereq_id in rows:
+            prereqs.setdefault(topic_id, []).append(prereq_id)
+        return prereqs
+    finally:
+        conn.close()
+
+
+def _get_prerequisite_table() -> dict:
+    """
+    Only cache successful loads -- a transient DB failure (or no
+    DATABASE_URL configured at all, e.g. in tests) returns {} uncached, so
+    the gate degrades to a no-op rather than either crashing recommendation
+    generation or permanently disabling itself for the life of the process.
+    """
+    global _PREREQ_TABLE_CACHE
+    if _PREREQ_TABLE_CACHE is None:
+        try:
+            _PREREQ_TABLE_CACHE = _load_prerequisite_table()
+        except Exception as exc:
+            log.warning("Prerequisite table unavailable, gate disabled for this call: %s", exc)
+            return {}
+    return _PREREQ_TABLE_CACHE
+
+
 @dataclass
 class MergedCandidate:
     """One problem, deduplicated across every pool that proposed it."""
     problem_id:        str
-    pool_sources:       list          # e.g. ["A", "vector"] -- every pool that proposed it
+    pool_sources:       list          # e.g. ["course_path", "vector"] -- every pool that proposed it
     best_score:         float         # max pool-local score across sources
     topic_tags:         list
     difficulty_score:   Optional[float]
@@ -77,6 +132,7 @@ class FilterReport:
     removed_solved:       int = 0
     removed_deprioritised: int = 0
     removed_locked:       int = 0
+    removed_prereq_gate:  int = 0
     removed_duplicates:   int = 0     # candidates merged into an existing entry
     removed_zpd:          int = 0
     output_count:         int = 0
@@ -87,6 +143,7 @@ class FilterReport:
             "removed_solved":        self.removed_solved,
             "removed_deprioritised": self.removed_deprioritised,
             "removed_locked":        self.removed_locked,
+            "removed_prereq_gate":   self.removed_prereq_gate,
             "removed_duplicates":    self.removed_duplicates,
             "removed_zpd":           self.removed_zpd,
             "output_count":          self.output_count,
@@ -98,8 +155,8 @@ class CandidateFilteringLayer:
     Usage:
         layer = CandidateFilteringLayer(graph)
         merged, report = layer.run({
-            "A": pool_a_candidates,
-            "D": pool_d_candidates,
+            "course_path": pool_course_path_candidates,
+            "difficulty": pool_difficulty_candidates,
             ...
         })
         ranker_input = layer.to_ranker_input(merged)
@@ -110,6 +167,7 @@ class CandidateFilteringLayer:
         self.graph = graph
         self._success_estimator = success_estimator or self._default_success_estimator
         self._prereq_index = self._build_prereq_index(graph)
+        self._prereq_table = _get_prerequisite_table()
 
     # ------------------------------------------------------------------ public
 
@@ -146,8 +204,27 @@ class CandidateFilteringLayer:
             if self._is_locked(c):
                 report.removed_locked += 1
                 continue
+            if self._fails_prerequisite_gate(c):
+                report.removed_prereq_gate += 1
+                continue
             out.append(c)
         return out
+
+    def _fails_prerequisite_gate(self, c: Candidate) -> bool:
+        """
+        Authoritative hard gate against the backend's topic_prerequisite
+        table (see module docstring for why this exists alongside
+        _is_locked). No-ops gracefully if the table couldn't be loaded.
+        """
+        if not self._prereq_table or not c.topic_tags:
+            return False
+        for topic in c.topic_tags:
+            for prereq in self._prereq_table.get(topic, []):
+                edge = self.graph.concept_edges.get(prereq)
+                mastery = edge.mastery_score if edge else 0.0
+                if mastery < MASTERY_THRESHOLD:
+                    return True
+        return False
 
     def _is_locked(self, c: Candidate) -> bool:
         """

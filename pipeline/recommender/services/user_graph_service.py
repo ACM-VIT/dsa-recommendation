@@ -41,6 +41,7 @@ from pipeline.recommender.models.user_graph import (
     UserGraph, UserNode, ProblemEdge, ConceptEdge,
     ConceptConceptEdge, EdgeType,
 )
+from pipeline.recommender.telemetry import MASTERY_THRESHOLD
 
 log = logging.getLogger(__name__)
 
@@ -398,7 +399,7 @@ class UserGraphService:
 
             nrd_str = str(next_review_date) if next_review_date else None
 
-            if final_mastery >= 0.7:
+            if final_mastery >= MASTERY_THRESHOLD:
                 etype = EdgeType.MASTERED
             elif final_mastery > 0.0:
                 etype = EdgeType.LEARNING

@@ -2,9 +2,10 @@ import requests
 from collections import defaultdict
 from pipeline.recommender.hlr import seed_half_life_from_cf
 from pipeline.recommender.bkt import (
-    process_submission, calculate_observed, update_bkt,
+    process_submission, update_bkt,
     MASTERY_THRESHOLD, DEFAULT_P_L,
 )
+from pipeline.recommender.telemetry import compute_telemetry_signal
 from database.postgres.db import get_connection, save_user_hlr
 from psycopg2.extras import RealDictCursor
 
@@ -240,18 +241,18 @@ def _apply_bkt_update(current_mastery: dict, topics: list, verdict: str,
     response. This applies BKT directly against the topics LC gave us,
     bypassing the internal title-to-slug lookup entirely for this path.
 
-    Mirrors process_submission()'s per-topic logic exactly (same
-    calculate_observed + update_bkt + MASTERY_THRESHOLD), just topic-source
+    Mirrors process_submission()'s per-topic logic exactly (same shared
+    telemetry signal + update_bkt + MASTERY_THRESHOLD), just topic-source
     swapped.
     """
     if not topics:
         return current_mastery, []
 
-    observed = calculate_observed(
+    observed = compute_telemetry_signal(
         verdict=verdict, hints_taken=hints_used,
         test_cases_passed=test_cases_passed, total_test_cases=total_test_cases,
         submission_count=submission_count, normalised_score=normalised_score,
-    )
+    ).value
 
     updated = dict(current_mastery)
     for topic in topics:

@@ -1,19 +1,20 @@
 """
 Recommendation controller.
 
-Stateless ML service -- backend sends everything needed in the request,
-ML computes and returns results. No Postgres writes here, read-only
-access to mastery/HLR tables.
+Reads the user's state from the canonical UserGraph (Redis -> Neo4j),
+kept fresh by StateUpdateService on every submission -- see
+submission_controller.py. No Postgres access here at all: the previous
+per-request get_user_mastery/get_user_hlr pre-fetch was dead work, since
+get_recommendations() already builds its own graph via UserGraphService
+and never consumed those pre-fetched values directly.
 """
 
 import logging
 import os
 
-import psycopg2
 from fastapi import HTTPException
 
 import db_env
-from database.postgres.db import get_user_mastery, get_user_hlr
 from pipeline.recommender.services.neo4j_graph_store import Neo4jGraphStore
 from pipeline.recommender.services.recommend import get_recommendations
 
@@ -25,44 +26,6 @@ log = logging.getLogger(__name__)
 # collection name would query the wrong one. Restored the override,
 # same default value so nothing changes for the current setup.
 COLLECTION = os.environ.get("QDRANT_COLLECTION", "problems_full")
-
-# ---------------------------------------------------------------------------
-# DBWrapper -- normalizes any psycopg2 cursor row type (plain tuple OR
-# RealDictRow) into positional tuples so UserGraphService's row[0]/row[1]
-# unpacking always works correctly.
-# ---------------------------------------------------------------------------
-
-class DBWrapper:
-    def __init__(self, conn):
-        self.conn = conn
-
-    def execute(self, query, params=None):
-        if params:
-            for key in params.keys():
-                query = query.replace(f":{key}", f"%({key})s")
-        cur = self.conn.cursor()
-        cur.execute(query, params or {})
-        return _NormalizingCursor(cur)
-
-
-class _NormalizingCursor:
-    def __init__(self, cur):
-        self._cur = cur
-
-    def _to_tuple(self, row):
-        if row is None:
-            return None
-        if isinstance(row, dict):
-            cols = [d[0] for d in self._cur.description]
-            return tuple(row.get(c) for c in cols)
-        return tuple(row)
-
-    def fetchone(self):
-        return self._to_tuple(self._cur.fetchone())
-
-    def fetchall(self):
-        return [self._to_tuple(r) for r in self._cur.fetchall()]
-
 
 # ---------------------------------------------------------------------------
 # Lazy singletons
@@ -97,31 +60,15 @@ def handle_recommend(user_id: str, limit: int = 10) -> dict:
     """
     Full ML pipeline recommendation.
 
-    Reads mastery/HLR from Postgres (backend's tables, read-only from ML
-    side), builds a UserGraph, runs the 7-pool recommendation pipeline,
-    returns a ranked list shaped to the backend's RecommendationLog schema.
+    Builds a UserGraph (Redis -> Neo4j -- see UserGraphService), runs the
+    candidate pool pipeline, returns a ranked list shaped to the backend's
+    RecommendationLog schema.
+
+    db=None -- ML never writes to Postgres. UserGraphService falls back to
+    an empty cold-start graph if a user has no Redis/Neo4j state yet (e.g.
+    their very first request, before any submission has been processed by
+    StateUpdateService).
     """
-    try:
-        mastery = get_user_mastery(user_id) or {}
-        hlr = get_user_hlr(user_id) or {}
-    except (RuntimeError, psycopg2.Error) as exc:
-        # FIX (Greptile P1 "Database Fallback Misses Outages"): only
-        # RuntimeError (unset DATABASE_URL) was caught before. A real
-        # outage -- connection refused, timeout, auth failure -- raises
-        # psycopg2.OperationalError/InterfaceError/etc, all subclasses of
-        # psycopg2.Error, NOT RuntimeError. Those escaped this branch
-        # entirely and surfaced as an unhandled 500. Now both the
-        # "not configured" case and genuine outages degrade to the same
-        # graceful cold-start path instead of crashing.
-        log.warning("Postgres unavailable (%s: %s) -- cold-start for user %s",
-                   exc.__class__.__name__, exc, user_id)
-        mastery, hlr = {}, {}
-
-    bkt_store = {user_id: mastery}
-    hlr_store = {user_id: hlr}
-
-    # db=None -- ML never writes to Postgres. UserGraphService falls back
-    # to new_user_graph() for cold-start users when db is None.
     try:
         result = get_recommendations(
             user_id=user_id,
@@ -129,8 +76,6 @@ def handle_recommend(user_id: str, limit: int = 10) -> dict:
             redis=None,
             neo4j=_get_neo4j_store(),
             qdrant=_get_qdrant(),
-            bkt_store=bkt_store,
-            hlr_store=hlr_store,
             collection=COLLECTION,
             total_n=max(limit * 3, 30),
             k=limit,

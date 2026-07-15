@@ -367,5 +367,50 @@ class TestResultSerialization(unittest.TestCase):
         self.assertIsInstance(raw, str)
 
 
+class TestResponseShapeContract(unittest.TestCase):
+    """
+    Durable regression guard for the redesign: asserts the JSON schema of
+    get_recommendations()'s output (top-level keys, per-recommendation keys
+    and types, enum membership) independent of which pools/ranker produced
+    it internally. This is the thing to run after any future change to
+    pools.py/heuristic_ranker.py/candidate_filtering.py/adaptive_difficulty.py
+    to confirm the external API contract held even though internals changed.
+    """
+
+    _VALID_SOURCES = {"graph_walk", "vector_similarity", "revision", "sm2_review", "course_path"}
+
+    def test_top_level_dict_shape(self):
+        db = _make_fake_db()
+        qdrant = FakeQdrant(_problems())
+        result = get_recommendations("u1", db=db, qdrant=qdrant, bkt_store={}, hlr_store={})
+        d = result.to_dict()
+        self.assertEqual(set(d.keys()), {"user_id", "recommendations"})
+        self.assertIsInstance(d["user_id"], str)
+        self.assertIsInstance(d["recommendations"], list)
+
+    def test_every_recommendation_field_has_the_right_type(self):
+        db = _make_fake_db()
+        qdrant = FakeQdrant(_problems())
+        result = get_recommendations("u1", db=db, qdrant=qdrant, bkt_store={}, hlr_store={})
+        self.assertGreater(len(result.recommendations), 0,
+                           "fixture produced zero recommendations -- can't assert on shape")
+        for rec in result.recommendations:
+            self.assertIsInstance(rec["problem_id"], str)
+            self.assertIsInstance(rec["title"], (str, type(None)))
+            self.assertIsInstance(rec["title_slug"], (str, type(None)))
+            self.assertIsInstance(rec["difficulty_score"], (float, int, type(None)))
+            self.assertIsInstance(rec["topic_tags"], list)
+            self.assertIn(rec["source"], self._VALID_SOURCES)
+            self.assertIsInstance(rec["recommended_at"], str)   # ISO timestamp
+
+    def test_cold_start_result_also_matches_contract(self):
+        """Same shape guarantee for a brand-new user with no telemetry at all."""
+        result = get_recommendations("brand_new", db=None, qdrant=FakeQdrant(_problems()))
+        d = result.to_dict()
+        self.assertEqual(set(d.keys()), {"user_id", "recommendations"})
+        for rec in result.recommendations:
+            self.assertIn(rec["source"], self._VALID_SOURCES)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

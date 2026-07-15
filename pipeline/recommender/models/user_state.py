@@ -4,6 +4,33 @@ pipeline/recommender/models/user_state.py
 Projects the UserGraph into a 1920-d user state vector that lives in the
 same embedding space as problems_full, enabling direct ANN queries.
 
+CANONICAL REPRESENTATION vs. RETRIEVAL PROJECTION
+---------------------------------------------------
+This module produces TWO things, and it matters which one each downstream
+consumer should use:
+
+  concept_weights (dict[topic_slug -> effective_weight], on UserStateVector,
+  along with mastered_concepts/weak_concepts/urgent_concepts) is the
+  canonical, interpretable representation of the user -- one entry per
+  topic in the 72-topic taxonomy the user actually has data for. Ranking,
+  the difficulty adapter, and pool eligibility (weak/stretch bands, prereq
+  gating) all read mastery/urgency directly off UserGraph.concept_edges or
+  these derived lists -- never the opaque vector. This is what "topic
+  mastery as the backbone of the user representation" already looks like
+  in this codebase; it just wasn't previously called out as the primary
+  representation.
+
+  vector (1920-d, qs_subspace + rgcn_subspace) is a RETRIEVAL-ONLY
+  projection of that same state into the problem embedding space, built
+  by weighting concept centroids using the interpretable signals above
+  (see _effective_weight). Its only consumer is VectorPool's ANN search
+  (via to_query_vector()) -- nothing else should read it directly. A
+  separate learned projection layer was considered and rejected: it would
+  require a training/monitoring loop for a component the rest of this
+  online layer deliberately keeps non-ML, for no clear retrieval-quality
+  win over this centroid-blend (which already puts users and problems in
+  the same space using signals the rest of the system already computes).
+
 PRIMARY PATH -- concept-centroid aggregation
 ---------------------------------------------
 For each concept c the user has a ConceptEdge on:

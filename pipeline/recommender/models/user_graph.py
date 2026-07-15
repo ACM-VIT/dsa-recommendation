@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from pipeline.recommender.telemetry import MASTERY_THRESHOLD
+
 
 # ---------------------------------------------------------------------------
 # Edge types
@@ -158,7 +160,7 @@ class UserGraph:
     # Convenience accessors
     # ------------------------------------------------------------------
 
-    def mastered_concepts(self, threshold: float = 0.7) -> list[str]:
+    def mastered_concepts(self, threshold: float = MASTERY_THRESHOLD) -> list[str]:
         return [s for s, e in self.concept_edges.items()
                 if e.mastery_score >= threshold]
 
@@ -236,7 +238,7 @@ class UserGraph:
         self.cc_edges.setdefault(edge.source_slug, []).append(edge)
         self._prereq_index_cache = None   # invalidate on any graph mutation
 
-    def is_locked(self, topic_tags: list, mastery_threshold: float = 0.7) -> bool:
+    def is_locked(self, topic_tags: list, mastery_threshold: float = MASTERY_THRESHOLD) -> bool:
         """
         True if ANY of the given topic tags requires a prerequisite concept
         the user hasn't mastered yet. Single source of truth for prereq

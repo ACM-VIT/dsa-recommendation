@@ -28,7 +28,11 @@ from pipeline.recommender.models.user_graph import UserGraph, EdgeType
 
 
 # Pools this controller assigns weights to. Matches the pool generation layer.
-POOLS = ["A", "B_C", "D", "E", "F", "G", "vector"]
+# Previously 7 letters (A/B_C/D/E/F/G/vector) -- collapsed to 4 pools that
+# absorb the old ones as internal target sets (see pools.py's module
+# docstring for the mapping): course_path=A+G, vector=B_C+vector,
+# difficulty=D+F, urgency=E (unchanged).
+POOLS = ["difficulty", "vector", "course_path", "urgency"]
 
 # A user is treated as "beginner-leaning" below this average mastery,
 # "advanced-leaning" above the upper bound. Between them is the mid band.
@@ -42,8 +46,10 @@ SEVERITY_WEAK_THRESHOLD = 0.6
 
 # Difficulty mix presets by user level. Each is (easy, medium, hard) and sums
 # to 1.0. The controller interpolates and adjusts these per pool.
+# (No separate MIX_MID constant: _base_mix linearly interpolates between
+# these two endpoints across the mid band, which already passes through
+# the natural midpoint -- a separate unused constant there was dead code.)
 MIX_BEGINNER = (0.60, 0.30, 0.10)
-MIX_MID      = (0.30, 0.45, 0.25)
 MIX_ADVANCED = (0.15, 0.40, 0.45)
 
 
@@ -167,39 +173,61 @@ class AdaptiveDifficultyController:
         """
         Raw pool scores, then normalised to sum to 1.0.
 
-        Cold start: lean on course path (A) and novelty (G) since there is
-        little behavioural signal to target weakness or review.
-        Otherwise: base weights by level, then boost review/weakness pools
-        when the user has overdue or weak concepts, and boost growth pools
-        when the user is strong and has little to review.
+        Weights are the old 7-letter raw scores summed into their new pool
+        (course_path=A+G, vector=B_C+vector, difficulty=D+F, urgency=E) --
+        preserves the original per-level tuning philosophy exactly, just
+        collapsed onto 4 pools instead of 7.
+
+        Cold start: lean on course_path (was A+G) since there is little
+        behavioural signal to target weakness or review.
+        Otherwise: base weights by level, then boost urgency when the user
+        has overdue/urgent concepts, and boost difficulty (which now also
+        covers stretch) when the user has many weak concepts.
         """
         if is_cold:
             raw = {
-                "A": 0.35, "B_C": 0.15, "D": 0.05, "E": 0.05,
-                "F": 0.10, "G": 0.20, "vector": 0.05,
+                "course_path": 0.35 + 0.20,   # A + G
+                "vector":      0.15 + 0.05,   # B_C + vector
+                "difficulty":  0.05 + 0.10,   # D + F
+                "urgency":     0.05,          # E
             }
             return self._normalise(raw)
 
-        # base weights per level
+        # base weights per level (old A/B_C/D/E/F/G/vector raw scores, summed
+        # into their new pool)
         if level == "beginner":
-            raw = {"A": 0.25, "B_C": 0.20, "D": 0.20, "E": 0.10,
-                   "F": 0.05, "G": 0.10, "vector": 0.10}
+            raw = {
+                "course_path": 0.25 + 0.10,   # A + G
+                "vector":      0.20 + 0.10,   # B_C + vector
+                "difficulty":  0.20 + 0.05,   # D + F
+                "urgency":     0.10,          # E
+            }
         elif level == "advanced":
-            raw = {"A": 0.05, "B_C": 0.15, "D": 0.10, "E": 0.10,
-                   "F": 0.25, "G": 0.15, "vector": 0.20}
+            raw = {
+                "course_path": 0.05 + 0.15,   # A + G
+                "vector":      0.15 + 0.20,   # B_C + vector
+                "difficulty":  0.10 + 0.25,   # D + F
+                "urgency":     0.10,          # E
+            }
         else:  # mid
-            raw = {"A": 0.15, "B_C": 0.20, "D": 0.15, "E": 0.10,
-                   "F": 0.15, "G": 0.10, "vector": 0.15}
+            raw = {
+                "course_path": 0.15 + 0.10,   # A + G
+                "vector":      0.20 + 0.15,   # B_C + vector
+                "difficulty":  0.15 + 0.15,   # D + F
+                "urgency":     0.10,          # E
+            }
 
         # review pressure: overdue reviews and urgent (forgetting) concepts
-        # push E (spaced review) up
+        # push urgency up
         if n_overdue > 0 or n_urgent > 0:
             pressure = min(0.20, 0.03 * (n_overdue + n_urgent))
-            raw["E"] += pressure
+            raw["urgency"] += pressure
 
-        # weakness pressure: many weak concepts push D (weakness recovery) up
+        # weakness pressure: many weak concepts push difficulty up (more
+        # total capacity for DifficultyPool, which allocates roughly half
+        # its quota to weak targets internally)
         if n_weak > 0:
-            raw["D"] += min(0.15, 0.03 * n_weak)
+            raw["difficulty"] += min(0.15, 0.03 * n_weak)
 
         return self._normalise(raw)
 
@@ -227,24 +255,34 @@ class AdaptiveDifficultyController:
     def _pool_mix(self, pool: str, base_mix: tuple, level: str) -> dict:
         """
         Adjust the base mix per pool. Each pool has a natural difficulty lean:
-          A  course path  -> follows base
-          B_C near/far    -> slightly easier (reinforcement)
-          D  weakness     -> easier (rebuild confidence)
-          E  spaced review-> follows base (review at learned level)
-          F  stretch      -> harder (growth)
-          G  novelty      -> easier (new concepts introduced gently)
-          vector          -> follows base
+          difficulty   -> follows base at the TOP level. It internally splits
+                          into weak (was D, easier) and stretch (was F,
+                          harder) target sets, each restricted to its own
+                          allowed bands via _draw_with_mix's allowed_bands
+                          override (see pools.py) -- so the easy-vs-hard
+                          lean is already enforced per sub-target-set
+                          regardless of what this top-level mix says, and no
+                          top-level shift is needed (old D and F wanted
+                          opposite shifts, which no longer makes sense to
+                          apply to a single pool-level mix).
+          vector       -> follows base (old B_C's small easy-shift only
+                          applied to its graph-cooccurrence fallback path,
+                          not the primary ANN path, so dropping it is a
+                          negligible, cold-start-only behavior change).
+          course_path  -> slightly easier (old G/novelty wanted a full easy
+                          shift for "introduce new concepts gently"; old A/
+                          course-path wanted no shift. Compromise: half the
+                          old shift amount, since both unlock and explore
+                          target sets now share one top-level mix with no
+                          per-target-set band restriction like difficulty
+                          has).
+          urgency      -> follows base (review at the difficulty the user
+                          learned the concept at, unchanged from old E).
         """
         easy, med, hard = base_mix
 
-        if pool in ("D", "G"):
-            # shift toward easy
-            easy, med, hard = self._shift(easy, med, hard, toward="easy")
-        elif pool == "B_C":
+        if pool == "course_path":
             easy, med, hard = self._shift(easy, med, hard, toward="easy", amount=0.05)
-        elif pool == "F":
-            # shift toward hard
-            easy, med, hard = self._shift(easy, med, hard, toward="hard")
 
         total = easy + med + hard
         return {

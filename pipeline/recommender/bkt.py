@@ -1,7 +1,11 @@
 import json
 import os
 from collections import defaultdict
-import numpy as np
+
+from pipeline.recommender.telemetry import (
+    MASTERY_THRESHOLD,
+    compute_telemetry_signal_from_submission,
+)
 
 # Load problem->topic mapping. Absolute path so this works regardless of the
 # working directory the process is launched from. Falls back to an empty
@@ -38,88 +42,11 @@ DEFAULT_P_L = {
     "unknown": 0.1  # topic we have no info about
 }
 
-# Mastery threshold — above this topic is considered mastered
-MASTERY_THRESHOLD = 0.75
-
 # Observed score below this is treated as a failed attempt -- the BKT
 # learning transition (P_T) is skipped for failures, since "learning from
 # a failed attempt" should not move mastery upward. Matches the original
 # intent of the `if observed >= 0.5` branch before it was dropped.
 LEARNING_TRANSITION_THRESHOLD = 0.5
-
-# STEP 3 — OBSERVED SCORE CALCULATION
-# Phase 1: weighted combination with default weights
-# Phase 2: replace with XGBoost once real user data is available
-
-def calculate_observed(verdict, hints_taken, test_cases_passed,
-                       total_test_cases, submission_count, normalised_score,
-                       weights=None):
-    """
-    Calculate observed performance score from submission signals.
-    Returns a value between 0.0 and 1.0.
-    
-    Phase 1: weighted combination
-    Phase 2: swap in XGBoost model here once training data is available
-    """
-    if total_test_cases == 0:
-        return 0.0
-
-    # Default weights — will be learned from data in Phase 2
-    if weights is None:
-        weights = {
-            "normalised_score": 0.40,
-            "pass_rate":        0.25,
-            "hint_penalty":     0.20,
-            "attempt_penalty":  0.15
-        }
-
-    # Component 1 — normalised score from backend
-    # Failed attempts get 30% credit at most
-    w1 = normalised_score if verdict == "OK" else normalised_score * 0.3
-
-    # Component 2 — pass rate (test cases passed / total)
-    w2 = test_cases_passed / total_test_cases
-
-    # Component 3 — hint penalty (more hints = lower score)
-    max_hints = 10
-    w3 = max(0.0, 1 - (hints_taken / max_hints))
-
-    # Component 4 — attempt penalty (more attempts = lower score)
-    max_attempts = 10
-    w4 = max(0.0, 1 - ((submission_count - 1) / max_attempts))
-
-    # Weighted combination
-    observed = (
-        weights["normalised_score"] * w1 +
-        weights["pass_rate"]        * w2 +
-        weights["hint_penalty"]     * w3 +
-        weights["attempt_penalty"]  * w4
-    )
-
-    # Failed attempts capped at 0.35 max
-    if verdict != "OK":
-        observed = min(0.35, observed)
-
-    return round(min(1.0, max(0.0, observed)), 4)
-
-# import xgboost as xgb
-#
-# def calculate_observed_xgb(model, verdict, hints_taken, test_cases_passed,
-#                             total_test_cases, submission_count, normalised_score):
-#     pass_rate = test_cases_passed / total_test_cases if total_test_cases > 0 else 0
-#     hint_penalty = max(0.0, 1 - (hints_taken / 10))
-#     attempt_penalty = max(0.0, 1 - ((submission_count - 1) / 10))
-#     solved = 1 if verdict == "OK" else 0
-#
-#     # Interaction features — captures non linear relationships
-#     hints_x_passrate = hint_penalty * pass_rate
-#     attempts_x_hints = attempt_penalty * hint_penalty
-#
-#     X = np.array([[normalised_score, pass_rate, hint_penalty,
-#                    attempt_penalty, hints_x_passrate, attempts_x_hints, solved]])
-#
-#     observed = model.predict_proba(X)[0][1]
-#     return round(float(observed), 4)
 
 
 def update_bkt(current_p_l, observed):
@@ -128,7 +55,7 @@ def update_bkt(current_p_l, observed):
 
     Args:
         current_p_l: current probability user knows this topic (0 to 1)
-        observed: performance score from calculate_observed (0 to 1)
+        observed: performance score from telemetry.compute_telemetry_signal (0 to 1)
 
     Returns:
         new_p_l: updated probability (0 to 1)
@@ -183,15 +110,9 @@ def process_submission(submission, user_mastery):
     if not topics:
         return user_mastery, [], []
 
-    # Calculate observed score
-    observed = calculate_observed(
-        verdict=submission["verdict"],
-        hints_taken=submission.get("hintsUsed", 0),
-        test_cases_passed=submission.get("testCasesPassed", 0),
-        total_test_cases=submission.get("totalTestCases", 1),
-        submission_count=submission.get("submissionCount", 1),
-        normalised_score=submission.get("normalisedScore", 0.0)
-    )
+    # Shared telemetry signal (also consumed by hlr.py::process_hlr for the
+    # same submission) -- see telemetry.py for the confidence-penalty logic.
+    observed = compute_telemetry_signal_from_submission(submission).value
 
     updated_mastery = dict(user_mastery)
     mastered_topics = []

@@ -21,6 +21,7 @@ from pipeline.recommender.services.candidate_filtering import (
     CandidateFilteringLayer, MergedCandidate, FilterReport,
     ZPD_LO, ZPD_HI, ZPD_OPTIMAL,
 )
+import pipeline.recommender.services.candidate_filtering as candidate_filtering
 
 
 def _graph(concepts=None, solved=None, deprioritised=None, cc=None):
@@ -102,6 +103,59 @@ class TestPerPoolFiltering(unittest.TestCase):
         layer = CandidateFilteringLayer(g)
         merged, report = layer.run({"A": [_cand("p1", "A", tags=[], difficulty=0.5)]})
         self.assertEqual(report.removed_locked, 0)
+
+
+# ===========================================================================
+# Prerequisite hard gate (ported from the formerly dead-code ranking.py)
+# ===========================================================================
+
+class TestPrerequisiteGate(unittest.TestCase):
+    """
+    This is a SEPARATE gate from is_locked() (which walks UserGraph.cc_edges,
+    the offline concept graph) -- it checks the backend's own
+    topic_prerequisite Postgres table. Patch _get_prerequisite_table
+    directly so these tests don't need a real database connection.
+    """
+
+    def setUp(self):
+        self._orig = candidate_filtering._get_prerequisite_table
+
+    def tearDown(self):
+        candidate_filtering._get_prerequisite_table = self._orig
+
+    def test_candidate_excluded_when_prereq_table_mastery_too_low(self):
+        # "graphs" requires "trees" per the backend's prerequisite table,
+        # but the user's graph.concept_edges has NO entry for "trees" at
+        # all (mastery defaults to 0.0) -- and critically, there is no
+        # cc_edges PREREQ edge for this pair, so is_locked() would NOT
+        # catch it. Only the table-based gate should.
+        candidate_filtering._get_prerequisite_table = lambda: {"graphs": ["trees"]}
+        g = _graph(concepts=[_concept("arrays", mastery=0.9, edge_type=EdgeType.MASTERED)])
+        layer = CandidateFilteringLayer(g)
+        merged, report = layer.run({"course_path": [_cand("p1", "course_path", ["graphs"], difficulty=0.5)]})
+        self.assertEqual(merged, [])
+        self.assertEqual(report.removed_prereq_gate, 1)
+        self.assertEqual(report.removed_locked, 0,
+                         "this candidate should be caught by the table gate, "
+                         "not the graph-based is_locked() check")
+
+    def test_candidate_passes_when_prereq_table_mastery_sufficient(self):
+        candidate_filtering._get_prerequisite_table = lambda: {"graphs": ["trees"]}
+        g = _graph(concepts=[
+            _concept("trees", mastery=0.9, edge_type=EdgeType.MASTERED),
+            _concept("graphs", mastery=0.6),
+        ])
+        layer = CandidateFilteringLayer(g)
+        merged, report = layer.run({"course_path": [_cand("p1", "course_path", ["graphs"], difficulty=0.5)]})
+        self.assertEqual(report.removed_prereq_gate, 0)
+        self.assertEqual(len(merged), 1)
+
+    def test_gate_is_a_noop_when_table_unavailable(self):
+        candidate_filtering._get_prerequisite_table = lambda: {}
+        g = _graph()
+        layer = CandidateFilteringLayer(g)
+        merged, report = layer.run({"course_path": [_cand("p1", "course_path", ["graphs"], difficulty=0.5)]})
+        self.assertEqual(report.removed_prereq_gate, 0)
 
 
 # ===========================================================================

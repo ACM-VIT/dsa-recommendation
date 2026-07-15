@@ -1,7 +1,7 @@
 """
 tests/test_pools_to_filtering_integration.py
 
-End-to-end integration test: builds all 7 real pools via build_pools(),
+End-to-end integration test: builds all 4 real pools via build_pools(),
 runs generate() on each against a shared UserGraph/state, and feeds their
 combined output through CandidateFilteringLayer.run() -- proving the two
 layers actually connect and every pool's output is accepted, not just
@@ -134,9 +134,9 @@ class TestAllPoolsFeedFiltering(unittest.TestCase):
         self.graph = _build_warm_graph()
         self.state = _StubState([1.0] * 1920, self.graph)
 
-    def test_all_seven_pools_registered(self):
+    def test_all_four_pools_registered(self):
         self.assertEqual(set(self.pools.keys()),
-                         {"A", "B_C", "D", "E", "F", "G", "vector"})
+                         {"difficulty", "vector", "course_path", "urgency"})
 
     def test_generate_from_every_pool_then_filter(self):
         """
@@ -194,13 +194,14 @@ class TestAllPoolsFeedFiltering(unittest.TestCase):
         connects outputs from independently-instantiated pool objects.
         """
         pool_candidates = {
-            "A": [self.pools["A"].generate(self.graph, self.state, n=10)][0],
+            "course_path": self.pools["course_path"].generate(self.graph, self.state, n=10),
             "vector": self.pools["vector"].generate(self.graph, self.state, n=10),
         }
         # force an overlap deliberately so we can assert on it regardless of
         # what the fake fixture naturally produces
         from pipeline.recommender.pools.base_pool import Candidate
-        pool_candidates["A"].append(Candidate("p_dp_med", "A", topic_tags=["dp"], difficulty_score=0.5))
+        pool_candidates["course_path"].append(
+            Candidate("p_dp_med", "course_path", topic_tags=["dp"], difficulty_score=0.5))
         pool_candidates["vector"].append(Candidate("p_dp_med", "vector", topic_tags=["dp"], difficulty_score=0.5, score=0.99))
 
         layer = CandidateFilteringLayer(self.graph)
@@ -208,7 +209,7 @@ class TestAllPoolsFeedFiltering(unittest.TestCase):
 
         hit = next((mc for mc in merged if mc.problem_id == "p_dp_med"), None)
         self.assertIsNotNone(hit)
-        self.assertIn("A", hit.pool_sources)
+        self.assertIn("course_path", hit.pool_sources)
         self.assertIn("vector", hit.pool_sources)
 
     def test_ranker_input_covers_candidates_from_multiple_pools(self):

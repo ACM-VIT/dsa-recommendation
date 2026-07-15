@@ -6,7 +6,7 @@ This is what a controller calls. One function in, one ranked list out:
     get_recommendations(user_id, db, redis, qdrant, bkt_store, hlr_store)
         --> UserGraphService.get()/new_user_graph()   (build/fetch the graph)
         --> UserStateBuilder.build()                   (1920-d state vector)
-        --> PoolGenerationOrchestrator.generate()       (7 pools -> filtered candidates)
+        --> PoolGenerationOrchestrator.generate()       (4 pools -> filtered candidates)
         --> CandidateFilteringLayer.to_ranker_input()   (flatten for ranking)
         --> CandidateStore.save()                       (stage before ranking)
         --> HeuristicRanker.rank()                       (score every candidate)
@@ -27,14 +27,14 @@ OUTPUT SCHEMA -- matches the backend's tables, nothing else:
     debug output that happened to leak into the response shape.
 
     RecommendationLog.source is a 5-value enum (graph_walk / vector_similarity
-    / revision / sm2_review / course_path) -- narrower than our 7 internal
-    pool names (A, B_C, D, E, F, G, vector). _POOL_TO_SOURCE below maps each
-    pool to the closest matching enum value; when a candidate came from more
-    than one pool, the highest-priority pool's mapping wins (course_path and
-    sm2_review take precedence as the most specific/actionable signals).
-    This mapping is a best-effort interpretation of the schema doc's five
-    values -- confirm it against the backend's actual source of truth if a
-    stricter mapping is needed.
+    / revision / sm2_review / course_path) -- our 4 internal pool names
+    (difficulty, vector, course_path, urgency) map onto it directly.
+    _POOL_TO_SOURCE below maps each pool to the closest matching enum value;
+    when a candidate came from more than one pool, the highest-priority
+    pool's mapping wins (urgency and course_path take precedence as the
+    most specific/actionable signals). This mapping is a best-effort
+    interpretation of the schema doc's five values -- confirm it against
+    the backend's actual source of truth if a stricter mapping is needed.
 
 CRITICAL: this module NEVER calls anything from the OFFLINE pipeline
 (pipeline/ingestion, pipeline/embeddings, pipeline/graphs). Ingestion,
@@ -77,20 +77,17 @@ log = logging.getLogger(__name__)
 # get_recommendations() works out of the box with zero setup.
 _DEFAULT_STORE = InMemoryCandidateStore()
 
-# Maps our 7 internal pool names to the backend's RecommendationLog.source
+# Maps our 4 internal pool names to the backend's RecommendationLog.source
 # enum (graph_walk / vector_similarity / revision / sm2_review /
 # course_path -- per the KNode schema doc). Order matters: when a candidate
 # came from multiple pools, the FIRST matching pool in this priority list
 # wins, most-specific/actionable signal first.
-_SOURCE_PRIORITY = ["E", "A", "D", "vector", "B_C", "F", "G"]
+_SOURCE_PRIORITY = ["urgency", "course_path", "difficulty", "vector"]
 _POOL_TO_SOURCE = {
-    "A":      "course_path",       # course path pool -> direct match
-    "E":      "sm2_review",        # spaced review (SM-2/HLR) -> direct match
-    "vector": "vector_similarity", # pure ANN -> direct match
-    "B_C":    "graph_walk",        # near/far transfer -- graph-distance based per the architecture doc
-    "D":      "revision",          # weakness recovery -- closest in spirit to revising weak areas
-    "F":      "course_path",       # stretch -- forward progression along the learning path
-    "G":      "graph_walk",        # novelty -- walks cc_edges from mastered concepts to find new ones
+    "urgency":     "sm2_review",         # spaced review (SM-2/HLR) -> direct match
+    "course_path": "course_path",        # curriculum unlock + novelty exploration -> direct match
+    "difficulty":  "revision",           # weak/stretch mastery-band targeting -- closest in spirit to revision
+    "vector":      "vector_similarity",  # ANN (+ cooccurrence fallback) -> direct match
 }
 
 
@@ -185,7 +182,7 @@ def get_recommendations(
                     return empty lists gracefully if None)
         bkt_store:  Shraddha's {user_id: {topic: mastery}} dict
         hlr_store:  Shraddha's {user_id: {topic: hlr_state}} dict
-        total_n:    how many raw candidates to request across all 7 pools
+        total_n:    how many raw candidates to request across all 4 pools
                     before filtering (see MAX_TOTAL_CANDIDATES ceiling)
         k:          final slate size (default 10)
         max_per_pool / max_per_topic: diversity mixer caps
@@ -214,7 +211,8 @@ def get_recommendations(
     staged = store.save(user_id, ranker_rows, gen_result.difficulty_plan.to_dict())
 
     ranker = HeuristicRanker()
-    ranked_rows = ranker.top_k(ranker_rows, k=max(k * 3, k))   # over-fetch for the mixer to diversify from
+    recent_topics = _recent_topics(graph)
+    ranked_rows = ranker.top_k(ranker_rows, k=max(k * 3, k), recent_topics=recent_topics)   # over-fetch for the mixer to diversify from
 
     # DiversityMixer works on MergedCandidate-shaped objects; ranked_rows are
     # plain dicts (post-ranker). Re-attach onto the original MergedCandidate
@@ -284,3 +282,17 @@ def _build_state(graph: UserGraph, qdrant) -> Optional[UserStateVector]:
     except Exception as exc:
         log.warning("State vector build failed, continuing without it: %s", exc)
         return None
+
+
+def _recent_topics(graph: UserGraph, limit: int = 10) -> list:
+    """
+    The user's most-recently-touched concept slugs (oldest first, most
+    recent last -- the shape HeuristicRanker's variety_score expects),
+    derived from ConceptEdge.last_attempted. Used to penalise recommending
+    more of what the user has just been doing, so the slate doesn't repeat
+    the same 1-2 topics over and over.
+    """
+    touched = [(slug, e.last_attempted) for slug, e in graph.concept_edges.items()
+              if e.last_attempted is not None]
+    touched.sort(key=lambda pair: pair[1])
+    return [slug for slug, _ in touched[-limit:]]

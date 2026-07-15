@@ -106,3 +106,28 @@ def save_user_mastery(user_id: str, mastery: dict):
         conn.commit()
     finally:
         conn.close()
+
+
+def update_user_mastery(user_id: str, mastery: dict):
+    """
+    Upsert BKT mastery scores to user_topic_mastery table, overwriting any
+    existing value. Used by StateUpdateService as a synchronous write-through
+    on every submission so GET /mastery keeps working now that UserGraph
+    (not Postgres) is the canonical store this value is computed from.
+    Deliberately separate from save_user_mastery (seeding path), which must
+    never overwrite real in-platform data with imported history.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            for topic_id, mastery_score in mastery.items():
+                cur.execute("""
+                    INSERT INTO user_topic_mastery (user_id, topic_id, mastery_score, updated_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (user_id, topic_id) DO UPDATE SET
+                        mastery_score = EXCLUDED.mastery_score,
+                        updated_at = EXCLUDED.updated_at
+                """, (user_id, topic_id, mastery_score))
+        conn.commit()
+    finally:
+        conn.close()

@@ -1,10 +1,10 @@
 """
 Pool generation orchestrator (PGO).
 
-This is the piece that ties "7 independent, tested pools" into "an actual
+This is the piece that ties "4 independent, tested pools" into "an actual
 recommendation for a user." It's the function the API layer calls with a
 user_id's graph/state and gets back a filtered, deduplicated candidate list
-ready for Shraddha's ranker.
+ready for the ranker.
 
 Pipeline:
     UserGraph + UserStateVector
@@ -102,7 +102,7 @@ class PoolGenerationOrchestrator:
         self.collection = collection
         self.controller = controller or AdaptiveDifficultyController()
         # allow injecting pre-built pools (for tests / custom Qdrant clients);
-        # otherwise build the standard 7 against this orchestrator's qdrant client
+        # otherwise build the standard 4 against this orchestrator's qdrant client
         self.pools = pools or build_pools(qdrant=qdrant, collection=collection)
 
     def generate(self, graph: UserGraph, state: UserStateVector,

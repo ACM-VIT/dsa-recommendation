@@ -1,9 +1,10 @@
 """
 tests/test_heuristic_ranker.py
 
-Tests the hand-tuned weighted heuristic ranker: proximity to ZPD_OPTIMAL,
-pool agreement saturation, urgency boost, similarity clamp, weight
-correctness, and top_k behaviour.
+Tests the hand-tuned weighted heuristic ranker: zpd_fit (Gaussian centered
+on this candidate's own avg_mastery, ported from the formerly dead-code
+ranking.py), pool agreement saturation, urgency boost, similarity clamp,
+variety scoring, weight correctness, and top_k behaviour.
 
 Run:
     python -m pytest tests/test_heuristic_ranker.py -v
@@ -15,22 +16,24 @@ import unittest
 
 from pipeline.recommender.services.heuristic_ranker import (
     HeuristicRanker, RankedCandidate, rank_top_k,
-    ZPD_OPTIMAL, ZPD_LO, ZPD_HI, POOL_AGREEMENT_SATURATION,
-    WEIGHT_PROXIMITY, WEIGHT_POOL_AGREE, WEIGHT_URGENCY, WEIGHT_SIMILARITY,
+    zpd_fit_score, calculate_variety_score,
+    ZPD_TARGET_DELTA, ZPD_SIGMA, POOL_AGREEMENT_SATURATION,
+    WEIGHT_ZPD_FIT, WEIGHT_POOL_AGREE, WEIGHT_URGENCY,
+    WEIGHT_SIMILARITY, WEIGHT_VARIETY,
 )
 
 
-def _row(pid, predicted_success=ZPD_OPTIMAL, pool_count=1,
-         max_urgency=0.0, best_pool_score=0.0):
+def _row(pid, avg_mastery=0.5, difficulty_score=0.6, pool_count=1,
+         max_urgency=0.0, best_pool_score=0.0, topic_tags=None):
     return {
         "problem_id": pid,
-        "pool_sources": ["A"] * pool_count,
+        "pool_sources": ["course_path"] * pool_count,
         "pool_count": pool_count,
-        "topic_tags": ["arrays"],
-        "difficulty_score": 0.5,
-        "avg_mastery": 0.6,
+        "topic_tags": topic_tags if topic_tags is not None else ["arrays"],
+        "difficulty_score": difficulty_score,
+        "avg_mastery": avg_mastery,
         "max_urgency": max_urgency,
-        "predicted_success": predicted_success,
+        "predicted_success": 0.68,
         "best_pool_score": best_pool_score,
     }
 
@@ -38,42 +41,69 @@ def _row(pid, predicted_success=ZPD_OPTIMAL, pool_count=1,
 class TestWeightsSumToOne(unittest.TestCase):
 
     def test_default_weights_sum_to_one(self):
-        total = WEIGHT_PROXIMITY + WEIGHT_POOL_AGREE + WEIGHT_URGENCY + WEIGHT_SIMILARITY
+        total = (WEIGHT_ZPD_FIT + WEIGHT_POOL_AGREE + WEIGHT_URGENCY
+                + WEIGHT_SIMILARITY + WEIGHT_VARIETY)
         self.assertAlmostEqual(total, 1.0, places=6)
 
 
-class TestProximityScore(unittest.TestCase):
+class TestZpdFitScore(unittest.TestCase):
 
-    def test_exact_optimal_gets_max_proximity(self):
-        ranker = HeuristicRanker()
-        rc = ranker.score_one(_row("p1", predicted_success=ZPD_OPTIMAL))
-        self.assertAlmostEqual(rc.proximity_score, 1.0, places=4)
+    def test_peak_at_mastery_plus_target_delta(self):
+        avg_mastery = 0.5
+        ideal = avg_mastery + ZPD_TARGET_DELTA
+        self.assertAlmostEqual(zpd_fit_score(avg_mastery, ideal), 1.0, places=6)
 
-    def test_band_edge_gets_lower_proximity(self):
-        ranker = HeuristicRanker()
-        rc_lo = ranker.score_one(_row("p1", predicted_success=ZPD_LO))
-        rc_optimal = ranker.score_one(_row("p2", predicted_success=ZPD_OPTIMAL))
-        self.assertLess(rc_lo.proximity_score, rc_optimal.proximity_score)
+    def test_symmetric_falloff_around_ideal(self):
+        avg_mastery = 0.5
+        ideal = avg_mastery + ZPD_TARGET_DELTA
+        below = zpd_fit_score(avg_mastery, ideal - 0.1)
+        above = zpd_fit_score(avg_mastery, ideal + 0.1)
+        self.assertAlmostEqual(below, above, places=6)
 
-    def test_other_band_edge_also_lower(self):
-        ranker = HeuristicRanker()
-        rc_hi = ranker.score_one(_row("p1", predicted_success=ZPD_HI))
-        rc_optimal = ranker.score_one(_row("p2", predicted_success=ZPD_OPTIMAL))
-        self.assertLess(rc_hi.proximity_score, rc_optimal.proximity_score)
+    def test_far_from_ideal_scores_low(self):
+        score = zpd_fit_score(avg_mastery=0.1, difficulty_score=0.95)
+        self.assertLess(score, 0.1)
 
-    def test_missing_predicted_success_defaults_to_optimal(self):
-        ranker = HeuristicRanker()
-        row = _row("p1")
-        row["predicted_success"] = None
-        rc = ranker.score_one(row)
-        self.assertAlmostEqual(rc.proximity_score, 1.0, places=4)
+    def test_ideal_shifts_with_avg_mastery(self):
+        # a candidate at difficulty 0.9 should fit a high-mastery user
+        # better than a low-mastery user
+        high_mastery_fit = zpd_fit_score(avg_mastery=0.8, difficulty_score=0.9)
+        low_mastery_fit = zpd_fit_score(avg_mastery=0.1, difficulty_score=0.9)
+        self.assertGreater(high_mastery_fit, low_mastery_fit)
 
-    def test_proximity_never_negative(self):
-        ranker = HeuristicRanker()
-        # even a value technically outside the band (shouldn't happen given
-        # upstream ZPD filtering, but defend anyway) shouldn't go negative
-        rc = ranker.score_one(_row("p1", predicted_success=0.0))
-        self.assertGreaterEqual(rc.proximity_score, 0.0)
+    def test_missing_difficulty_returns_neutral(self):
+        self.assertEqual(zpd_fit_score(0.5, None), 0.5)
+
+    def test_missing_avg_mastery_returns_neutral(self):
+        self.assertEqual(zpd_fit_score(None, 0.5), 0.5)
+
+
+class TestVarietyScore(unittest.TestCase):
+
+    def test_no_recent_topics_is_neutral(self):
+        self.assertEqual(calculate_variety_score(["arrays"], []), 1.0)
+        self.assertEqual(calculate_variety_score(["arrays"], None), 1.0)
+
+    def test_topic_seen_recently_lowers_score(self):
+        score = calculate_variety_score(["arrays"], ["graphs", "arrays"])
+        self.assertLess(score, 1.0)
+
+    def test_topic_not_in_recent_window_is_neutral(self):
+        score = calculate_variety_score(["dp"], ["graphs", "arrays"])
+        self.assertEqual(score, 1.0)
+
+    def test_all_topics_recent_scores_zero(self):
+        score = calculate_variety_score(["arrays", "graphs"], ["arrays", "graphs"])
+        self.assertEqual(score, 0.0)
+
+    def test_window_limits_how_far_back_counts(self):
+        recent = ["arrays"] + ["filler"] * 20   # arrays is outside a small window
+        score = calculate_variety_score(["arrays"], recent, window=5)
+        self.assertEqual(score, 1.0)
+
+    def test_never_negative(self):
+        score = calculate_variety_score(["arrays"], ["arrays", "arrays", "arrays"])
+        self.assertGreaterEqual(score, 0.0)
 
 
 class TestPoolAgreement(unittest.TestCase):
@@ -136,13 +166,30 @@ class TestSimilarityClamp(unittest.TestCase):
         self.assertEqual(rc.similarity_score, 0.0)
 
 
+class TestVarietyInRanker(unittest.TestCase):
+
+    def test_recent_topic_candidate_ranks_below_fresh_topic_candidate(self):
+        ranker = HeuristicRanker()
+        rows = [
+            _row("fresh", topic_tags=["dp"]),
+            _row("stale", topic_tags=["arrays"]),
+        ]
+        ranked = ranker.rank(rows, recent_topics=["arrays", "arrays"])
+        self.assertEqual(ranked[0].problem_id, "fresh")
+
+    def test_no_recent_topics_leaves_variety_neutral(self):
+        ranker = HeuristicRanker()
+        rc = ranker.score_one(_row("p1"), recent_topics=None)
+        self.assertEqual(rc.variety_score, 1.0)
+
+
 class TestRankingOrder(unittest.TestCase):
 
     def test_rank_sorts_best_first(self):
         ranker = HeuristicRanker()
         rows = [
-            _row("low", predicted_success=ZPD_LO, pool_count=1),
-            _row("high", predicted_success=ZPD_OPTIMAL, pool_count=3, max_urgency=0.5),
+            _row("low", avg_mastery=0.1, difficulty_score=0.95, pool_count=1),
+            _row("high", avg_mastery=0.5, difficulty_score=0.6, pool_count=3, max_urgency=0.5),
         ]
         ranked = ranker.rank(rows)
         self.assertEqual(ranked[0].problem_id, "high")
@@ -180,16 +227,16 @@ class TestCustomWeights(unittest.TestCase):
     def test_custom_weights_change_ranking(self):
         """
         With urgency weighted to dominate everything else, a high-urgency/
-        low-proximity candidate should outrank a perfect-proximity/zero-urgency
+        poor-zpd-fit candidate should outrank a perfect-fit/zero-urgency
         one -- proves weights are actually used, not hardcoded internally.
         """
         ranker = HeuristicRanker(
-            weight_proximity=0.05, weight_pool_agree=0.05,
-            weight_urgency=0.85, weight_similarity=0.05,
+            weight_zpd_fit=0.05, weight_pool_agree=0.05,
+            weight_urgency=0.80, weight_similarity=0.05, weight_variety=0.05,
         )
         rows = [
-            _row("perfect_proximity", predicted_success=ZPD_OPTIMAL, max_urgency=0.0),
-            _row("urgent", predicted_success=ZPD_LO, max_urgency=0.95),
+            _row("perfect_fit", avg_mastery=0.5, difficulty_score=0.6, max_urgency=0.0),
+            _row("urgent", avg_mastery=0.1, difficulty_score=0.95, max_urgency=0.95),
         ]
         ranked = ranker.rank(rows)
         self.assertEqual(ranked[0].problem_id, "urgent")

@@ -38,7 +38,7 @@ if "qdrant_client.models" not in sys.modules:
 from pipeline.recommender.models.user_graph import (
     UserGraph, UserNode, ConceptEdge, EdgeType,
 )
-from pipeline.recommender.pools.pools import WeaknessPool, StretchPool, CoursePathPool
+from pipeline.recommender.pools.pools import DifficultyPool, CoursePathPool
 from pipeline.recommender.pools.base_pool import EASY_BAND, MED_BAND, HARD_BAND
 from pipeline.recommender.services.pool_generation import (
     PoolGenerationOrchestrator, MAX_TOTAL_CANDIDATES, MAX_PER_POOL_ABSOLUTE,
@@ -108,9 +108,13 @@ class TestMixReachesQdrant(unittest.TestCase):
     the difficulty ranges and per-band counts sent to Qdrant.
     """
 
-    def test_weakness_pool_requests_only_easy_and_medium_bands(self):
+    def test_difficulty_pool_weak_targets_request_only_easy_and_medium_bands(self):
+        """Graph has ONLY a weak concept (no stretch-eligible concept), so
+        DifficultyPool's entire quota goes to the weak sub-call, restricted
+        to allowed_bands=("easy", "medium") -- HARD_BAND must never appear,
+        even though the global mix included 40% hard."""
         qdrant = RecordingQdrant(_many_problems("dp", 100))
-        pool = WeaknessPool(qdrant=qdrant)
+        pool = DifficultyPool(qdrant=qdrant)
         graph = UserGraph(user=UserNode(user_id="u1"))
         graph.add_concept_edge(ConceptEdge("dp", EdgeType.WEAK, mastery_score=0.3, severity=0.8))
 
@@ -118,13 +122,14 @@ class TestMixReachesQdrant(unittest.TestCase):
         pool.generate(graph, None, n=20, mix=mix)
 
         ranges_requested = {c["range"] for c in qdrant.scroll_calls if c["range"]}
-        # WeaknessPool.ALLOWED_BANDS = ("easy", "medium") -- HARD_BAND must
-        # never appear, even though the global mix included 40% hard.
         self.assertNotIn(HARD_BAND, ranges_requested)
 
-    def test_stretch_pool_requests_only_medium_and_hard_bands(self):
+    def test_difficulty_pool_stretch_targets_request_only_medium_and_hard_bands(self):
+        """Graph has ONLY a partial-mastery (stretch-eligible) concept, no
+        weak concept, so the entire quota goes to the stretch sub-call,
+        restricted to allowed_bands=("medium", "hard")."""
         qdrant = RecordingQdrant(_many_problems("graphs", 100))
-        pool = StretchPool(qdrant=qdrant)
+        pool = DifficultyPool(qdrant=qdrant)
         graph = UserGraph(user=UserNode(user_id="u1"))
         graph.add_concept_edge(ConceptEdge("graphs", EdgeType.LEARNING, mastery_score=0.5))
 
@@ -215,7 +220,7 @@ class TestHardCeilings(unittest.TestCase):
 
     def test_single_pool_never_exceeds_absolute_cap(self):
         qdrant = RecordingQdrant(_many_problems("arrays", 500))
-        # a user whose entire signal points at one pool (heavy weakness -> pool D)
+        # a user whose entire signal points at one pool (heavy weakness -> difficulty pool)
         graph = UserGraph(user=UserNode(user_id="u1"))
         for i in range(10):
             graph.add_concept_edge(ConceptEdge(f"weak{i}", EdgeType.WEAK,
@@ -243,8 +248,8 @@ class TestHardCeilings(unittest.TestCase):
             def to_query_vector(self): return None
 
         result = orchestrator.generate(graph, _StubState(), total_n=30)
-        self.assertIn("A", result.requested_counts)
-        self.assertIsInstance(result.requested_counts["A"], int)
+        self.assertIn("course_path", result.requested_counts)
+        self.assertIsInstance(result.requested_counts["course_path"], int)
 
 
 if __name__ == "__main__":

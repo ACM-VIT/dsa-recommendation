@@ -117,28 +117,33 @@ class TestDifficultyMixShifts(unittest.TestCase):
     def test_beginner_mix_favours_easy(self):
         g = _graph([_concept("arrays", mastery=0.2)], solved=["p1"])
         plan = build_difficulty_plan(g, now=NOW)
-        mix = plan.mix_of("A")
+        mix = plan.mix_of("course_path")
         self.assertGreater(mix["easy"], mix["hard"])
 
     def test_advanced_mix_favours_hard(self):
         g = _graph([_concept("arrays", mastery=0.85)], solved=["p1"])
         plan = build_difficulty_plan(g, now=NOW)
-        mix = plan.mix_of("A")
+        mix = plan.mix_of("course_path")
         self.assertGreater(mix["hard"], mix["easy"])
 
-    def test_stretch_pool_harder_than_weakness_pool(self):
+    def test_difficulty_pool_top_level_mix_follows_base(self):
+        """
+        The old separate weakness(D)-easier / stretch(F)-harder shift now
+        happens INSIDE DifficultyPool.generate() via allowed_bands on its
+        two internal target sets (see pools.py), not at this plan level --
+        a single pool-level mix can't simultaneously lean both ways, so it
+        follows the base mix unshifted here. The per-band restriction
+        itself is covered by
+        test_mix_propagation.py::test_difficulty_pool_weak_targets_request_only_easy_and_medium_bands
+        and its stretch-targets counterpart.
+        """
         g = _graph([_concept("arrays", mastery=0.5)], solved=["p1"])
         plan = build_difficulty_plan(g, now=NOW)
-        f_mix = plan.mix_of("F")   # stretch
-        d_mix = plan.mix_of("D")   # weakness
-        self.assertGreater(f_mix["hard"], d_mix["hard"])
-
-    def test_weakness_pool_easier_than_stretch(self):
-        g = _graph([_concept("arrays", mastery=0.5)], solved=["p1"])
-        plan = build_difficulty_plan(g, now=NOW)
-        d_mix = plan.mix_of("D")
-        f_mix = plan.mix_of("F")
-        self.assertGreater(d_mix["easy"], f_mix["easy"])
+        mix = plan.mix_of("difficulty")
+        base = plan.mix_of("urgency")   # urgency also follows base, unshifted
+        self.assertAlmostEqual(mix["easy"], base["easy"], places=6)
+        self.assertAlmostEqual(mix["medium"], base["medium"], places=6)
+        self.assertAlmostEqual(mix["hard"], base["hard"], places=6)
 
 
 class TestReviewPressure(unittest.TestCase):
@@ -156,7 +161,7 @@ class TestReviewPressure(unittest.TestCase):
         plan_over = build_difficulty_plan(g_over, now=NOW)
 
         self.assertGreater(plan_over.n_overdue, 0)
-        self.assertGreater(plan_over.weight_of("E"), plan_base.weight_of("E"))
+        self.assertGreater(plan_over.weight_of("urgency"), plan_base.weight_of("urgency"))
 
     def test_urgent_concepts_boost_review(self):
         g = _graph([
@@ -187,7 +192,7 @@ class TestWeaknessPressure(unittest.TestCase):
         plan_weak = build_difficulty_plan(g_weak, now=NOW)
 
         self.assertEqual(plan_weak.n_weak, 2)
-        self.assertGreater(plan_weak.weight_of("D"), plan_base.weight_of("D"))
+        self.assertGreater(plan_weak.weight_of("difficulty"), plan_base.weight_of("difficulty"))
 
 
 class TestColdStart(unittest.TestCase):
@@ -200,9 +205,9 @@ class TestColdStart(unittest.TestCase):
     def test_cold_start_favours_course_path(self):
         g = _graph()
         plan = build_difficulty_plan(g, now=NOW)
-        # course path (A) should be the heaviest pool at cold start
+        # course_path (absorbs old A + G) should be the heaviest pool at cold start
         weights = {p: plan.weight_of(p) for p in POOLS}
-        self.assertEqual(max(weights, key=weights.get), "A")
+        self.assertEqual(max(weights, key=weights.get), "course_path")
 
     def test_no_solves_is_cold_even_with_concepts(self):
         g = _graph([_concept("arrays", mastery=0.5)], solved=None)

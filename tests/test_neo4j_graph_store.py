@@ -367,7 +367,7 @@ class TestStateUpdatePersistsToNeo4j(unittest.TestCase):
         redis = FakeRedis()
         neo4j = Neo4jGraphStore(driver=FakeDriver())
         graph_service = UserGraphService(db=None, redis=redis, neo4j=neo4j)
-        state_service = StateUpdateService(graph_service, qdrant=None, bkt_store={}, hlr_store={})
+        state_service = StateUpdateService(graph_service, qdrant=None)
 
         original_bkt_map = dict(bkt_module.problem_to_topics)
         original_hlr_map = dict(hlr_module.problem_to_topics)

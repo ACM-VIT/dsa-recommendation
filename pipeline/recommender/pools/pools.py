@@ -1,7 +1,7 @@
 """
-The seven candidate pools. Each subclasses BasePool and implements generate().
+The four candidate pools. Each subclasses BasePool and implements generate().
 
-generate(graph, state, n, mix) now takes TWO quotas from the pipeline:
+generate(graph, state, n, mix) takes TWO quotas from the pipeline:
   - n    : how many candidates this pool should return (from the adaptive
            difficulty controller's per-pool WEIGHT, converted to a count by
            the pool generation orchestrator)
@@ -9,10 +9,38 @@ generate(graph, state, n, mix) now takes TWO quotas from the pipeline:
            difficulty controller's per-pool MIX), so the pool draws the
            right proportion of each difficulty band instead of one fixed band
 
-Each pool restricts the controller's mix to its own natural difficulty lean
-via ALLOWED_BANDS (e.g. pool D never draws "hard" even if the controller's
-global mix includes some hard percentage -- that gets renormalised away).
-_draw_with_mix on BasePool does the actual proportional splitting.
+Previously there were 7 pools (A/B_C/D/E/F/G/vector). On inspection, those 7
+boiled down to 3 retrieval axes (structural graph traversal, semantic
+similarity, mastery-band filtering) plus one distinct recency axis, not 7
+independent concerns:
+
+  DifficultyPool  - absorbs the old WeaknessPool (D) and StretchPool (F).
+                    Mastery-band filtering was never a separate retrieval
+                    axis -- both were the same "problems by concept, at a
+                    difficulty band" query with different mastery-score
+                    cutoffs. Handled here as two internal target sets (weak
+                    / stretch), each restricted to its own allowed bands via
+                    _draw_with_mix's allowed_bands override, combined into
+                    one candidate list.
+  VectorPool      - absorbs the old TransferPool (B_C) and VectorPool
+                    (vector). Both were ANN over the user vector; the only
+                    difference was TransferPool's graph-cooccurrence
+                    fallback when no vector exists, which is now VectorPool's
+                    own cold-start branch.
+  CoursePathPool  - absorbs the old CoursePathPool (A) and NoveltyPool (G).
+                    Both walk cc_edges from the user's current concepts;
+                    they differ only in which edge type/target-selection
+                    rule they use (PREREQ-unlocked vs. COOCCURS-reachable-
+                    unseen). Handled as two internal target sets (unlock /
+                    explore), combined into one candidate list. Shares
+                    STARTER_CONCEPTS cold-start fallback via
+                    BasePool._starter_concept_fallback (previously
+                    duplicated across the two separate pool classes).
+  UrgencyPool     - renamed SpacedReviewPool (E), logic unchanged. Kept as
+                    its own top-level pool because recency/forgetting is a
+                    genuinely distinct axis from mastery-band or structural
+                    traversal -- collapsing it into another pool would blur
+                    a signal worth keeping explicit.
 """
 
 from __future__ import annotations
@@ -20,76 +48,77 @@ from __future__ import annotations
 from pipeline.recommender.models.user_graph import UserGraph, EdgeType
 from pipeline.recommender.models.user_state import UserStateVector
 from pipeline.recommender.pools.base_pool import (
-    BasePool, Candidate, EASY_BAND, MED_BAND, HARD_BAND,
+    BasePool, Candidate, EASY_BAND, MED_BAND, HARD_BAND, STARTER_CONCEPTS,
 )
 
-# Foundational topics for a genuinely cold-start user: someone with ZERO
-# concept_edges and ZERO cc_edges (cc_edges are only loaded for concepts the
-# user has already touched, so a brand new user has none either). Without
-# this, CoursePathPool's and NoveltyPool's cold-start branches had nothing
-# to fall back to except graph.concept_edges/graph.cc_edges -- which are
-# exactly what's empty in the case they exist to handle, so both pools
-# silently returned zero candidates for every new user.
-#
-# Matches KNode's difficulty_tier=1 seeded topics ("1=Arrays/Strings" per
-# the schema) -- the two topics every learner starts with regardless of
-# background. Adjust this list if the seeded topic taxonomy changes.
-STARTER_CONCEPTS = ["arrays", "strings", "hash_map", "sorting"]
 
+class DifficultyPool(BasePool):
+    """
+    Difficulty pool.
+    Draws candidates by concept mastery-band: weak concepts (mastery < 0.4,
+    restricted to easy/medium so recovery stays gentle) and partial-mastery
+    "stretch" concepts (0.4 <= mastery < 0.75, restricted to medium/hard so
+    growth stays growth). Both sets are queried in the same generate() call
+    and combined -- if only one set has targets, it gets the full quota.
+    """
+    name = "difficulty"
+    ALLOWED_BANDS = ("easy", "medium", "hard")
 
-class CoursePathPool(BasePool):
-    """
-    Pool A - course path.
-    Next problems in curriculum order: concepts the user is currently learning
-    (not yet mastered) plus concepts unlocked by their mastered prerequisites.
-    """
-    name = "A"
-    ALLOWED_BANDS = ("easy", "medium", "hard")   # follows the controller's base mix
+    _WEAK_BANDS = ("easy", "medium")
+    _STRETCH_BANDS = ("medium", "hard")
 
     def generate(self, graph, state, n=20, mix=None):
         exclude = self._exclude_ids(graph)
-        mastered = set(graph.mastered_concepts())
 
-        # concepts in progress (has an edge but not mastered)
-        in_progress = [s for s, e in graph.concept_edges.items()
-                       if s not in mastered]
+        weak = set(graph.weak_concepts())
+        low_mastery = [s for s, e in graph.concept_edges.items() if e.mastery_score < 0.4]
+        weak_targets = list(weak | set(low_mastery))
 
-        # concepts unlocked: targets whose prereqs are all mastered
-        unlocked = []
-        for src, edges in graph.cc_edges.items():
-            for e in edges:
-                if e.edge_type == EdgeType.PREREQ and src in mastered:
-                    unlocked.append(e.target_slug)
+        stretch_targets = [s for s, e in graph.concept_edges.items()
+                           if 0.4 <= e.mastery_score < 0.75]
+        if not stretch_targets:
+            # if nothing partial, stretch on mastered concepts instead
+            stretch_targets = list(graph.mastered_concepts())
 
-        target_concepts = list(dict.fromkeys(in_progress + unlocked))
-        if not target_concepts:
-            # Genuinely cold start (no concepts, no unlocks): the old
-            # fallback here read graph.concept_edges, which is empty by
-            # definition for exactly this case -- it always returned
-            # nothing. Fixed to use STARTER_CONCEPTS, but the FIRST fix
-            # still only ever searched EASY_BAND with a single query --
-            # if the dataset simply has few/no easy-difficulty problems
-            # tagged with these starter concepts (common for general
-            # problem manifests), this returned zero even when
-            # medium-difficulty matches existed. Using _draw_with_mix
-            # respects the controller's actual easy/medium/hard split for
-            # this pool, matching every other pool's approach, so it finds
-            # candidates across whatever bands actually have data.
-            return self._draw_with_mix(STARTER_CONCEPTS, n, exclude, mix, graph=graph)
-        return self._draw_with_mix(target_concepts, n, exclude, mix, graph=graph)
+        if not weak_targets and not stretch_targets:
+            return []
+
+        if weak_targets and stretch_targets:
+            weak_n = (n + 1) // 2
+            stretch_n = n - weak_n
+        elif weak_targets:
+            weak_n, stretch_n = n, 0
+        else:
+            weak_n, stretch_n = 0, n
+
+        out = []
+        local_exclude = set(exclude)
+        if weak_n > 0 and weak_targets:
+            got = self._draw_with_mix(weak_targets, weak_n, local_exclude, mix,
+                                      graph=graph, allowed_bands=self._WEAK_BANDS)
+            out.extend(got)
+            local_exclude |= {c.problem_id for c in got}
+        if stretch_n > 0 and stretch_targets:
+            got = self._draw_with_mix(stretch_targets, stretch_n, local_exclude, mix,
+                                      graph=graph, allowed_bands=self._STRETCH_BANDS)
+            out.extend(got)
+
+        return out[:n]
 
 
-class TransferPool(BasePool):
+class VectorPool(BasePool):
     """
-    Pool B/C - near and far transfer.
-    Near: same pattern as recently solved, different surface.
-    Far:  analogous pattern reachable via concept co-occurrence edges.
-    Implemented as ANN over the user vector, since the user state vector
-    already encodes the patterns they have been solving. ANN doesn't filter
-    by difficulty band directly, so `mix` only applies to the graph-fallback
-    path (no vector available).
+    Vector pool - semantic similarity.
+    Primary: ANN over the user state vector on the 1920-d full collection
+    (Question + Solution + RGCN shared embedding space) -- surfaces
+    structurally similar problems regardless of topic label, and covers
+    both "near transfer" (same pattern) and "far transfer" (analogous
+    pattern) since both live in the same similarity search.
+    Fallback (no vector yet, e.g. cold start): concepts reachable via
+    co-occurrence edges from what the user already knows, drawn by concept
+    + difficulty mix instead of ANN.
     """
-    name = "B_C"
+    name = "vector"
     ALLOWED_BANDS = ("easy", "medium", "hard")
 
     def generate(self, graph, state, n=20, mix=None):
@@ -97,7 +126,7 @@ class TransferPool(BasePool):
         qv = state.to_query_vector() if state is not None else None
         if qv is not None:
             return self._ann(qv, n, exclude, graph=graph)
-        # graph-only fallback: co-occurring concepts of what they know
+
         cooccur = []
         for edges in graph.cc_edges.values():
             for e in edges:
@@ -106,42 +135,89 @@ class TransferPool(BasePool):
         return self._draw_with_mix(cooccur, n, exclude, mix, graph=graph)
 
 
-class WeaknessPool(BasePool):
+class CoursePathPool(BasePool):
     """
-    Pool D - weakness recovery.
-    Targets concepts with high gap severity or low BKT mastery. Never draws
-    hard problems -- the controller's mix is renormalised across easy/medium
-    only, so a global mix with e.g. 20% hard still keeps this pool gentle.
+    Course path pool - structural graph traversal.
+    Unlock targets: concepts currently in progress (not yet mastered) plus
+    concepts unlocked by mastered prerequisites -- the curriculum's next
+    step. Explore targets: concepts the user hasn't touched yet but are
+    reachable from what they've mastered via any concept-concept edge --
+    gentle novelty. Both target sets are queried in the same generate()
+    call and combined.
     """
-    name = "D"
-    ALLOWED_BANDS = ("easy", "medium")
+    name = "course_path"
+    ALLOWED_BANDS = ("easy", "medium", "hard")
 
     def generate(self, graph, state, n=20, mix=None):
         exclude = self._exclude_ids(graph)
-        weak = set(graph.weak_concepts())
-        low_mastery = [s for s, e in graph.concept_edges.items()
-                       if e.mastery_score < 0.4]
-        target = list(weak | set(low_mastery))
-        if not target:
-            return []
-        return self._draw_with_mix(target, n, exclude, mix, graph=graph)
+        mastered = set(graph.mastered_concepts())
+        seen = set(graph.concept_edges.keys())
+
+        # unlock targets: in-progress concepts + prereq-unlocked concepts
+        in_progress = [s for s in graph.concept_edges if s not in mastered]
+        unlocked = []
+        for src, edges in graph.cc_edges.items():
+            for e in edges:
+                if e.edge_type == EdgeType.PREREQ and src in mastered:
+                    unlocked.append(e.target_slug)
+        unlock_targets = list(dict.fromkeys(in_progress + unlocked))
+
+        # explore targets: unseen concepts reachable from mastered ones
+        novel = []
+        for src, edges in graph.cc_edges.items():
+            if src not in mastered:
+                continue
+            for e in edges:
+                if e.target_slug not in seen:
+                    novel.append(e.target_slug)
+        explore_targets = list(dict.fromkeys(novel))
+
+        if not unlock_targets and not explore_targets:
+            # Genuinely cold start: nothing in progress, nothing unlocked,
+            # nothing mastered to explore from. Fall back to starter topics
+            # via _draw_with_mix so the actual data's difficulty bands
+            # decide what comes back, rather than a single fixed-band query.
+            fallback = self._starter_concept_fallback(seen)
+            if not fallback:
+                return []
+            return self._draw_with_mix(fallback, n, exclude, mix, graph=graph)
+
+        if unlock_targets and explore_targets:
+            unlock_n = (n + 1) // 2
+            explore_n = n - unlock_n
+        elif unlock_targets:
+            unlock_n, explore_n = n, 0
+        else:
+            unlock_n, explore_n = 0, n
+
+        out = []
+        local_exclude = set(exclude)
+        if unlock_n > 0 and unlock_targets:
+            got = self._draw_with_mix(unlock_targets, unlock_n, local_exclude, mix, graph=graph)
+            out.extend(got)
+            local_exclude |= {c.problem_id for c in got}
+        if explore_n > 0 and explore_targets:
+            got = self._draw_with_mix(explore_targets, explore_n, local_exclude, mix, graph=graph)
+            out.extend(got)
+
+        return out[:n]
 
 
-class SpacedReviewPool(BasePool):
+class UrgencyPool(BasePool):
     """
-    Pool E - spaced review.
-    Concepts that are overdue (SM-2 next_review_date in the past) or high HLR
-    urgency (user is forgetting). Draws at the difficulty the user learned
-    them, following the controller's full mix.
+    Urgency pool - HLR / spaced review (renamed from SpacedReviewPool,
+    logic unchanged).
+    Concepts that are overdue (SM-2 next_review_date in the past) or high
+    HLR urgency (user is forgetting). Draws at the difficulty the user
+    learned them, following the controller's full mix.
     """
-    name = "E"
+    name = "urgency"
     ALLOWED_BANDS = ("easy", "medium", "hard")
 
     def generate(self, graph, state, n=20, mix=None):
         exclude = self._exclude_ids(graph)
         urgent = set(graph.urgent_concepts())
 
-        # overdue by SM-2 date
         import time
         from datetime import datetime, timezone
         now = time.time()
@@ -164,96 +240,12 @@ class SpacedReviewPool(BasePool):
         return self._draw_with_mix(target, n, exclude, mix, graph=graph)
 
 
-class StretchPool(BasePool):
-    """
-    Pool F - stretch.
-    Problems slightly above current ability on concepts the user has some
-    grip on (partial mastery). Never draws easy -- renormalised across
-    medium/hard only, so growth stays growth even if the controller's
-    global mix has an easy percentage.
-    """
-    name = "F"
-    ALLOWED_BANDS = ("medium", "hard")
-
-    def generate(self, graph, state, n=20, mix=None):
-        exclude = self._exclude_ids(graph)
-        # concepts with moderate mastery: enough grip to stretch, not mastered
-        stretch_concepts = [s for s, e in graph.concept_edges.items()
-                            if 0.4 <= e.mastery_score < 0.75]
-        if not stretch_concepts:
-            # if nothing partial, stretch on mastered concepts instead
-            stretch_concepts = list(graph.mastered_concepts())
-        if not stretch_concepts:
-            return []
-        return self._draw_with_mix(stretch_concepts, n, exclude, mix, graph=graph)
-
-
-class NoveltyPool(BasePool):
-    """
-    Pool G - novelty.
-    Concepts the user has never touched, reachable from their mastered
-    concepts via prerequisite or co-occurrence edges. Introduces new topics
-    gently -- restricted to easy/medium, no hard.
-    """
-    name = "G"
-    ALLOWED_BANDS = ("easy", "medium")
-
-    def generate(self, graph, state, n=20, mix=None):
-        exclude = self._exclude_ids(graph)
-        seen = set(graph.concept_edges.keys())
-        mastered = set(graph.mastered_concepts())
-
-        # new concepts reachable from mastered ones
-        novel = []
-        for src, edges in graph.cc_edges.items():
-            if src not in mastered:
-                continue
-            for e in edges:
-                if e.target_slug not in seen:
-                    novel.append(e.target_slug)
-
-        novel = list(dict.fromkeys(novel))
-        if not novel:
-            # Genuinely cold start (nothing mastered yet, so nothing to
-            # branch novelty from) -- fall back to starter topics rather
-            # than returning nothing. Excludes anything already in the
-            # user's graph so this doesn't just duplicate CoursePathPool's
-            # fallback for a user who has SOME data but no mastered concepts.
-            fallback = [c for c in STARTER_CONCEPTS if c not in seen]
-            if not fallback:
-                return []
-            return self._draw_with_mix(fallback, n, exclude, mix, graph=graph)
-        return self._draw_with_mix(novel, n, exclude, mix, graph=graph)
-
-
-class VectorPool(BasePool):
-    """
-    Pool vector - semantic similarity.
-    Pure ANN over the user state vector on the 1920-d full collection.
-    Surfaces structurally similar problems regardless of topic label.
-    ANN doesn't filter by difficulty band -- mix is accepted for interface
-    consistency but has no effect here (pure similarity search).
-    """
-    name = "vector"
-    ALLOWED_BANDS = ("easy", "medium", "hard")
-
-    def generate(self, graph, state, n=20, mix=None):
-        exclude = self._exclude_ids(graph)
-        qv = state.to_query_vector() if state is not None else None
-        if qv is None:
-            return []
-        return self._ann(qv, n, exclude, graph=graph)
-
-
 # registry so the pool generation layer can build them by name
 POOL_CLASSES = {
-    "A":      CoursePathPool,
-    "B_C":    TransferPool,
-    "D":      WeaknessPool,
-    "E":      SpacedReviewPool,
-    "F":      StretchPool,
-    "G":      NoveltyPool,
-    "vector": VectorPool,
+    "difficulty":  DifficultyPool,
+    "vector":      VectorPool,
+    "course_path": CoursePathPool,
+    "urgency":     UrgencyPool,
 }
 
 

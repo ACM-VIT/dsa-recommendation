@@ -48,6 +48,20 @@ HARD_BAND = (0.66, 1.0)
 
 _BAND_MAP = {"easy": EASY_BAND, "medium": MED_BAND, "hard": HARD_BAND}
 
+# Foundational topics for a genuinely cold-start user: someone with ZERO
+# concept_edges and ZERO cc_edges (cc_edges are only loaded for concepts the
+# user has already touched, so a brand new user has none either). Without a
+# fallback, any pool whose targets are derived purely from concept_edges/
+# cc_edges has nothing to work with for exactly the case it needs to handle.
+#
+# Matches KNode's difficulty_tier=1 seeded topics ("1=Arrays/Strings" per
+# the schema) -- the topics every learner starts with regardless of
+# background. Adjust this list if the seeded topic taxonomy changes.
+#
+# Lives here (not in pools.py) because it's shared cold-start infra used by
+# more than one pool's fallback branch -- see BasePool._starter_concept_fallback.
+STARTER_CONCEPTS = ["arrays", "strings", "hash_map", "sorting"]
+
 
 @dataclass
 class Candidate:
@@ -141,15 +155,22 @@ class BasePool:
 
     def _draw_with_mix(self, concept_slugs, n, exclude,
                        mix: Optional[dict] = None,
-                       graph: Optional[UserGraph] = None) -> list[Candidate]:
+                       graph: Optional[UserGraph] = None,
+                       allowed_bands: Optional[tuple] = None) -> list[Candidate]:
         """
         Split n candidates across easy/medium/hard according to `mix` (the
         adaptive difficulty controller's per-pool {"easy":.., "medium":..,
-        "hard":..} percentages), restricted to this pool's ALLOWED_BANDS and
-        renormalised across just those bands.
+        "hard":..} percentages), restricted to `allowed_bands` (defaults to
+        this pool's ALLOWED_BANDS) and renormalised across just those bands.
+
+        `allowed_bands` lets a single pool draw different sub-target-sets
+        under different band restrictions in the same generate() call --
+        e.g. DifficultyPool draws its "weak" targets restricted to
+        (easy, medium) and its "stretch" targets restricted to (medium,
+        hard) in two separate calls, without needing two pool classes.
 
         If mix is None (caller didn't wire the controller's plan through),
-        falls back to a single call across this pool's full allowed range --
+        falls back to a single call across the full allowed range --
         preserves old behaviour for any caller not yet passing mix.
 
         Results are self-filtered for locked prereqs before returning
@@ -160,17 +181,19 @@ class BasePool:
         if not concept_slugs:
             return []
 
+        bands = tuple(allowed_bands) if allowed_bands is not None else self.ALLOWED_BANDS
+
         if mix is None:
-            lo = _BAND_MAP[self.ALLOWED_BANDS[0]][0]
-            hi = _BAND_MAP[self.ALLOWED_BANDS[-1]][1]
+            lo = _BAND_MAP[bands[0]][0]
+            hi = _BAND_MAP[bands[-1]][1]
             out = self._problems_by_concept(concept_slugs, n, exclude, difficulty=(lo, hi))
             return self._self_filter_locked(out, graph)
 
-        # renormalise the controller's mix over just this pool's allowed bands
-        sub = {b: max(0.0, mix.get(b, 0.0)) for b in self.ALLOWED_BANDS}
+        # renormalise the controller's mix over just the allowed bands
+        sub = {b: max(0.0, mix.get(b, 0.0)) for b in bands}
         total = sum(sub.values())
         if total <= 0:
-            sub = {b: 1.0 / len(self.ALLOWED_BANDS) for b in self.ALLOWED_BANDS}
+            sub = {b: 1.0 / len(bands) for b in bands}
         else:
             sub = {b: v / total for b, v in sub.items()}
 
@@ -178,7 +201,7 @@ class BasePool:
         # remainder so the total always sums to exactly n
         counts = {}
         remaining = n
-        bands = list(self.ALLOWED_BANDS)
+        bands = list(bands)
         for i, b in enumerate(bands):
             if i == len(bands) - 1:
                 counts[b] = remaining
@@ -200,6 +223,16 @@ class BasePool:
             local_exclude |= {c.problem_id for c in got}
         out = self._self_filter_locked(out, graph)
         return out[:n]
+
+    def _starter_concept_fallback(self, seen: set) -> list:
+        """
+        STARTER_CONCEPTS minus anything already in the user's graph -- for
+        genuinely cold-start users (zero concept_edges, zero cc_edges) whose
+        pool-specific target derivation has nothing to work with. Shared by
+        CoursePathPool's unlock/explore modes so both fall back to the same
+        starter set instead of duplicating this list-and-filter twice.
+        """
+        return [c for c in STARTER_CONCEPTS if c not in seen]
 
     def _problems_by_concept(self, concept_slugs, n, exclude,
                              difficulty=None) -> list[Candidate]:

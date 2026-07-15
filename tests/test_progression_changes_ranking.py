@@ -226,8 +226,7 @@ class TestSingleUserProgressionChangesRanking(unittest.TestCase):
         self.graph_service = UserGraphService(
             db=None, redis=self.redis, bkt=self.bkt_store, hlr=self.hlr_store)
         self.state_service = StateUpdateService(
-            self.graph_service, qdrant=self.qdrant,
-            bkt_store=self.bkt_store, hlr_store=self.hlr_store)
+            self.graph_service, qdrant=self.qdrant)
 
     def tearDown(self):
         _restore_problem_topic_mapping()
@@ -334,8 +333,7 @@ class TestDifferentUsersDiverge(unittest.TestCase):
         self.graph_service = UserGraphService(
             db=None, redis=self.redis, bkt=self.bkt_store, hlr=self.hlr_store)
         self.state_service = StateUpdateService(
-            self.graph_service, qdrant=self.qdrant,
-            bkt_store=self.bkt_store, hlr_store=self.hlr_store)
+            self.graph_service, qdrant=self.qdrant)
 
     def tearDown(self):
         _restore_problem_topic_mapping()
@@ -415,8 +413,7 @@ class TestManySimulatedUsersAreNotAllIdentical(unittest.TestCase):
             bkt_store: dict = {}
             hlr_store: dict = {}
             graph_service = UserGraphService(db=None, redis=redis, bkt=bkt_store, hlr=hlr_store)
-            state_service = StateUpdateService(
-                graph_service, qdrant=qdrant, bkt_store=bkt_store, hlr_store=hlr_store)
+            state_service = StateUpdateService(graph_service, qdrant=qdrant)
 
             topic_focus = ["arrays", "graphs", "trees", "dp", "strings"]
             distinct_slates = set()

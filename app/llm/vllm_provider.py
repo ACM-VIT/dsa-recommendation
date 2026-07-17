@@ -39,6 +39,7 @@ class VLLMProvider:
             ],
             "temperature": 0.0,
             "top_p": 0.9,
+            "max_tokens": settings.llm_max_tokens,
 
             "chat_template_kwargs": {
                 "enable_thinking": False

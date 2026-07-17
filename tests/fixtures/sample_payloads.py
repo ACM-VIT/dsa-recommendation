@@ -386,77 +386,77 @@
 #     "submitted_at": "2026-07-05T10:45:00Z",
 # }
 
-# VALID_WRONG_ANSWER_PAYLOAD = {
-#     "submission_id": "sub_roman_001",
-#     "problem_id": "integer_to_roman",
-#     "problem_statement": (
-#         "Given an integer, convert it to a Roman numeral. Roman numerals use "
-#         "subtractive notation for the values 4 (IV), 9 (IX), 40 (XL), 90 (XC), "
-#         "400 (CD), and 900 (CM)."
-#     ),
-#     "user_id": "user_527",
+VALID_WRONG_ANSWER_PAYLOAD = {
+    "submission_id": "sub_roman_001",
+    "problem_id": "integer_to_roman",
+    "problem_statement": (
+        "Given an integer, convert it to a Roman numeral. Roman numerals use "
+        "subtractive notation for the values 4 (IV), 9 (IX), 40 (XL), 90 (XC), "
+        "400 (CD), and 900 (CM)."
+    ),
+    "user_id": "user_527",
 
-#     "language": "python",
-#     "verdict": "wrong_answer",
+    "language": "python",
+    "verdict": "wrong_answer",
 
-#     "source_code": """class Solution:
-#     def intToRoman(self, num: int) -> str:
-#         value_symbols = [
-#             (1000, 'M'),
-#             (500, 'D'),
-#             (100, 'C'),
-#             (50, 'L'),
-#             (10, 'X'),
-#             (5, 'V'),
-#             (1, 'I')
-#         ]
+    "source_code": """class Solution:
+    def intToRoman(self, num: int) -> str:
+        value_symbols = [
+            (1000, 'M'),
+            (500, 'D'),
+            (100, 'C'),
+            (50, 'L'),
+            (10, 'X'),
+            (5, 'V'),
+            (1, 'I')
+        ]
 
-#         res = []
+        res = []
 
-#         for value, symbol in value_symbols:
-#             if num == 0:
-#                 break
+        for value, symbol in value_symbols:
+            if num == 0:
+                break
 
-#             count = num // value
-#             res.append(symbol * count)
-#             num -= count * value
+            count = num // value
+            res.append(symbol * count)
+            num -= count * value
 
-#         return ''.join(res)
-# """,
+        return ''.join(res)
+""",
 
-#     "test_summary": {
-#         "total_test_cases": 35,
-#         "passed_test_cases": 29,
-#         "failed_test_cases": 6,
-#     },
+    "test_summary": {
+        "total_test_cases": 35,
+        "passed_test_cases": 29,
+        "failed_test_cases": 6,
+    },
 
-#     "sample_failed_cases": [
-#         {
-#             "stdin": "num = 4",
-#             "expected_output": "IV",
-#             "actual_output": "IIII",
-#         },
-#         {
-#             "stdin": "num = 9",
-#             "expected_output": "IX",
-#             "actual_output": "VIIII",
-#         },
-#         {
-#             "stdin": "num = 944",
-#             "expected_output": "CMXLIV",
-#             "actual_output": "DCCCCXXXXIIII",
-#         },
-#     ],
+    "sample_failed_cases": [
+        {
+            "stdin": "num = 4",
+            "expected_output": "IV",
+            "actual_output": "IIII",
+        },
+        {
+            "stdin": "num = 9",
+            "expected_output": "IX",
+            "actual_output": "VIIII",
+        },
+        {
+            "stdin": "num = 944",
+            "expected_output": "CMXLIV",
+            "actual_output": "DCCCCXXXXIIII",
+        },
+    ],
 
-#     "stdout": "DCCCCXXXXIIII",
-#     "stderr": "",
-#     "compile_output": "",
+    "stdout": "DCCCCXXXXIIII",
+    "stderr": "",
+    "compile_output": "",
 
-#     "execution_time_ms": 4,
-#     "memory_kb": 11328,
+    "execution_time_ms": 4,
+    "memory_kb": 11328,
 
-#     "submitted_at": "2026-07-05T18:15:00Z",
-# }
+    "submitted_at": "2026-07-05T18:15:00Z",
+}
 
 # VALID_WRONG_ANSWER_PAYLOAD = {
 #     "submission_id": "sub_regex_001",
@@ -533,49 +533,49 @@
 #     "submitted_at": "2026-07-05T22:10:00Z",
 # }
 
-VALID_WRONG_ANSWER_PAYLOAD = {
-    "submission_id": "sub_subarraysum_006",
-    "problem_id": "subarray_sum_equals_k",
-    "problem_statement": (
-        "Given an array of integers nums and an integer k, return the total "
-        "number of contiguous subarrays whose sum equals k."
-    ),
-    "user_id": "user_675",
-    "language": "python",
-    "verdict": "wrong_answer",
-    "source_code": """class Solution:
-    def subarraySum(self, nums: list[int], k: int) -> int:
-        count = 0
-        prefix_sum = 0
-        seen = {}
-        for num in nums:
-            prefix_sum += num
-            if prefix_sum - k in seen:
-                count += seen[prefix_sum - k]
-            seen[prefix_sum] = seen.get(prefix_sum, 0) + 1
-        return count
-""",
-    "test_summary": {
-        "total_test_cases": 38,
-        "passed_test_cases": 29,
-        "failed_test_cases": 9,
-    },
-    "sample_failed_cases": [
-        {
-            "stdin": "nums = [1, 1, 1]\nk = 2",
-            "expected_output": "2",
-            "actual_output": "1",
-        },
-        {
-            "stdin": "nums = [1, 2, 3]\nk = 3",
-            "expected_output": "2",
-            "actual_output": "1",
-        },
-    ],
-    "stdout": "1",
-    "stderr": "",
-    "compile_output": "",
-    "execution_time_ms": 7,
-    "memory_kb": 11904,
-    "submitted_at": "2026-07-06T13:05:00Z",
-}
+# VALID_WRONG_ANSWER_PAYLOAD = {
+#     "submission_id": "sub_subarraysum_006",
+#     "problem_id": "subarray_sum_equals_k",
+#     "problem_statement": (
+#         "Given an array of integers nums and an integer k, return the total "
+#         "number of contiguous subarrays whose sum equals k."
+#     ),
+#     "user_id": "user_675",
+#     "language": "python",
+#     "verdict": "wrong_answer",
+#     "source_code": """class Solution:
+#     def subarraySum(self, nums: list[int], k: int) -> int:
+#         count = 0
+#         prefix_sum = 0
+#         seen = {}
+#         for num in nums:
+#             prefix_sum += num
+#             if prefix_sum - k in seen:
+#                 count += seen[prefix_sum - k]
+#             seen[prefix_sum] = seen.get(prefix_sum, 0) + 1
+#         return count
+# """,
+#     "test_summary": {
+#         "total_test_cases": 38,
+#         "passed_test_cases": 29,
+#         "failed_test_cases": 9,
+#     },
+#     "sample_failed_cases": [
+#         {
+#             "stdin": "nums = [1, 1, 1]\nk = 2",
+#             "expected_output": "2",
+#             "actual_output": "1",
+#         },
+#         {
+#             "stdin": "nums = [1, 2, 3]\nk = 3",
+#             "expected_output": "2",
+#             "actual_output": "1",
+#         },
+#     ],
+#     "stdout": "1",
+#     "stderr": "",
+#     "compile_output": "",
+#     "execution_time_ms": 7,
+#     "memory_kb": 11904,
+#     "submitted_at": "2026-07-06T13:05:00Z",
+# }

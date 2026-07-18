@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     vllm_base_url: str = "https://ascuvum64parbo-8000.proxy.runpod.net"
     vllm_model: str = "qwen2.5-coder:7b"
     llm_timeout_seconds: float = Field(default=600, gt=0)
+    llm_max_tokens: int = Field(default=600, gt=0)
     log_level: str = "INFO"
     max_source_code_chars: int = Field(default=20000, gt=0)
     max_problem_statement_chars: int = Field(default=4000, gt=0)

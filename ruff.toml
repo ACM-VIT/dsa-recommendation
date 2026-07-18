@@ -4,3 +4,7 @@ target-version = "py312"
 [lint]
 select = ["E", "F", "I"]
 
+[lint.per-file-ignores]
+"app/prompt_builder/builder.py" = ["E501"]
+"tests/unit/test_prompt_builder.py" = ["E501"]
+"scratch*.py" = ["E501", "F401", "E741"]

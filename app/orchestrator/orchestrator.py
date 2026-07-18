@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-from app.config.settings import get_settings
 from app.constants import (
     PROCESSING_STATUS_COMPLETED,
     PROCESSING_STATUS_ERROR,
@@ -15,7 +14,7 @@ from app.constants import (
     REASONING_QUALITY_UNKNOWN,
 )
 from app.llm.base import LLMError, LLMTimeoutError
-from app.llm.client import LLMClient
+from app.llm.client import LLMClient, get_active_model_name
 from app.logging.logger import bind_submission_id, get_logger, reset_submission_id
 from app.models.request_schemas import AnalyzeRequest
 from app.models.response_schemas import AnalyzeResponse, ErrorCategory, ProcessingStatus
@@ -47,15 +46,6 @@ def _normalize_error_category(category: str | None) -> ErrorCategory:
     return "unknown"
 
 
-def _model_name() -> str:
-    """Return the configured model name for the active provider."""
-
-    settings = get_settings()
-    if settings.llm_provider == "ollama":
-        return settings.ollama_model
-    return settings.vllm_model
-
-
 def _fallback_response(
     request: AnalyzeRequest,
     *,
@@ -84,7 +74,6 @@ def _fallback_response(
 
 async def analyze_submission(request: AnalyzeRequest) -> AnalyzeResponse:
     """Analyze a submission through safety, rules, LLM, validation, and scrubbing."""
-
     started_at = time.perf_counter()
     token = bind_submission_id(request.submission_id)
     try:
@@ -153,7 +142,7 @@ async def analyze_submission(request: AnalyzeRequest) -> AnalyzeResponse:
                     request,
                     started_at=started_at,
                     processing_status=PROCESSING_STATUS_LLM_OUTPUT_INVALID,
-                    model_used=_model_name(),
+                    model_used=get_active_model_name(),
                     hint_text=rule_outcome.deterministic_hint,
                     error_category=rule_outcome.error_category,
                 )
@@ -170,7 +159,7 @@ async def analyze_submission(request: AnalyzeRequest) -> AnalyzeResponse:
                 concept_gaps=parsed.concept_gaps,
                 processing_status=PROCESSING_STATUS_COMPLETED,
                 processing_ms=_elapsed_ms(started_at),
-                model_used=_model_name(),
+                model_used=get_active_model_name(),
             )
         except Exception:
             logger.exception("analysis orchestration failed")

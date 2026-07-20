@@ -7,7 +7,7 @@ import pytest
 
 from app.llm import client as client_module
 from app.llm import ollama_provider, vllm_provider
-from app.llm.base import LLMError, LLMTimeoutError
+from app.llm.base import LLMConnectionError, LLMError, LLMServerError, LLMTimeoutError
 from app.llm.client import LLMClient, get_llm_provider
 from app.llm.ollama_provider import OllamaProvider
 from app.llm.vllm_provider import VLLMProvider
@@ -92,6 +92,43 @@ async def test_ollama_provider_non_2xx(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ollama_provider_5xx_raises_server_error(monkeypatch) -> None:
+    """Ollama HTTP 5xx responses raise the retryable LLMServerError subtype."""
+
+    _FakeAsyncClient.response = _response(503, {"error": "unavailable"})
+    _FakeAsyncClient.exception = None
+    monkeypatch.setattr(ollama_provider.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(LLMServerError):
+        await OllamaProvider().generate("system", "user", timeout_seconds=3)
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_4xx_is_not_retryable(monkeypatch) -> None:
+    """Ollama HTTP 4xx responses raise plain LLMError, not a retryable subtype."""
+
+    _FakeAsyncClient.response = _response(400, {"error": "bad request"})
+    _FakeAsyncClient.exception = None
+    monkeypatch.setattr(ollama_provider.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(LLMError) as exc_info:
+        await OllamaProvider().generate("system", "user", timeout_seconds=3)
+    assert not isinstance(exc_info.value, (LLMServerError, LLMConnectionError, LLMTimeoutError))
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_connection_failure_raises_connection_error(monkeypatch) -> None:
+    """Ollama transport-level failures raise the retryable LLMConnectionError subtype."""
+
+    _FakeAsyncClient.response = None
+    _FakeAsyncClient.exception = httpx.ConnectError("refused")
+    monkeypatch.setattr(ollama_provider.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(LLMConnectionError):
+        await OllamaProvider().generate("system", "user", timeout_seconds=3)
+
+
+@pytest.mark.asyncio
 async def test_vllm_provider_success(monkeypatch) -> None:
     """vLLM provider returns raw assistant content."""
 
@@ -128,6 +165,43 @@ async def test_vllm_provider_non_2xx(monkeypatch) -> None:
     monkeypatch.setattr(vllm_provider.httpx, "AsyncClient", _FakeAsyncClient)
 
     with pytest.raises(LLMError):
+        await VLLMProvider().generate("system", "user", timeout_seconds=3)
+
+
+@pytest.mark.asyncio
+async def test_vllm_provider_5xx_raises_server_error(monkeypatch) -> None:
+    """vLLM HTTP 5xx responses raise the retryable LLMServerError subtype."""
+
+    _FakeAsyncClient.response = _response(500, {"error": "boom"})
+    _FakeAsyncClient.exception = None
+    monkeypatch.setattr(vllm_provider.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(LLMServerError):
+        await VLLMProvider().generate("system", "user", timeout_seconds=3)
+
+
+@pytest.mark.asyncio
+async def test_vllm_provider_4xx_is_not_retryable(monkeypatch) -> None:
+    """vLLM HTTP 4xx responses raise plain LLMError, not a retryable subtype."""
+
+    _FakeAsyncClient.response = _response(429, {"error": "too many requests"})
+    _FakeAsyncClient.exception = None
+    monkeypatch.setattr(vllm_provider.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(LLMError) as exc_info:
+        await VLLMProvider().generate("system", "user", timeout_seconds=3)
+    assert not isinstance(exc_info.value, (LLMServerError, LLMConnectionError, LLMTimeoutError))
+
+
+@pytest.mark.asyncio
+async def test_vllm_provider_connection_failure_raises_connection_error(monkeypatch) -> None:
+    """vLLM transport-level failures raise the retryable LLMConnectionError subtype."""
+
+    _FakeAsyncClient.response = None
+    _FakeAsyncClient.exception = httpx.ConnectError("refused")
+    monkeypatch.setattr(vllm_provider.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(LLMConnectionError):
         await VLLMProvider().generate("system", "user", timeout_seconds=3)
 
 
@@ -176,7 +250,11 @@ async def test_llm_client_uses_configured_timeout(monkeypatch) -> None:
     monkeypatch.setattr(
         client_module,
         "get_settings",
-        lambda: SimpleNamespace(llm_timeout_seconds=4),
+        lambda: SimpleNamespace(
+            llm_timeout_seconds=4,
+            llm_max_retries=0,
+            llm_retry_backoff_seconds=0.01,
+        ),
     )
 
     result = await LLMClient(Provider()).get_structured_completion(
@@ -184,6 +262,74 @@ async def test_llm_client_uses_configured_timeout(monkeypatch) -> None:
     )
 
     assert result == "raw"
+
+
+class _FlakyProvider:
+    """Fails with a configured exception a number of times, then succeeds."""
+
+    def __init__(self, exception: Exception, fail_times: int) -> None:
+        self.exception = exception
+        self.fail_times = fail_times
+        self.calls = 0
+
+    async def generate(self, system: str, user: str, timeout_seconds: float) -> str:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise self.exception
+        return "raw"
+
+
+def _retry_settings(max_retries: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        llm_timeout_seconds=3,
+        llm_max_retries=max_retries,
+        llm_retry_backoff_seconds=0.001,
+    )
+
+
+@pytest.mark.asyncio
+async def test_llm_client_retries_transient_failure_then_succeeds(monkeypatch) -> None:
+    """A retryable error is retried and the eventual success is returned."""
+
+    monkeypatch.setattr(client_module, "get_settings", lambda: _retry_settings(max_retries=2))
+    provider = _FlakyProvider(LLMServerError("503"), fail_times=2)
+
+    result = await LLMClient(provider).get_structured_completion(
+        LLMPrompt(system="system", user="user"),
+    )
+
+    assert result == "raw"
+    assert provider.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_llm_client_exhausts_retries_and_raises(monkeypatch) -> None:
+    """A persistently failing retryable error is raised once retries are exhausted."""
+
+    monkeypatch.setattr(client_module, "get_settings", lambda: _retry_settings(max_retries=2))
+    provider = _FlakyProvider(LLMConnectionError("refused"), fail_times=99)
+
+    with pytest.raises(LLMConnectionError):
+        await LLMClient(provider).get_structured_completion(
+            LLMPrompt(system="system", user="user"),
+        )
+
+    assert provider.calls == 3  # 1 initial attempt + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_llm_client_does_not_retry_non_transient_error(monkeypatch) -> None:
+    """A non-retryable LLMError (4xx, malformed response) is raised without retrying."""
+
+    monkeypatch.setattr(client_module, "get_settings", lambda: _retry_settings(max_retries=2))
+    provider = _FlakyProvider(LLMError("bad request"), fail_times=99)
+
+    with pytest.raises(LLMError):
+        await LLMClient(provider).get_structured_completion(
+            LLMPrompt(system="system", user="user"),
+        )
+
+    assert provider.calls == 1
 
 
 @pytest.mark.asyncio

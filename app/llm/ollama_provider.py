@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from app.config.settings import get_settings
-from app.llm.base import LLMError, LLMTimeoutError
+from app.llm.base import LLMConnectionError, LLMError, LLMServerError, LLMTimeoutError
 
 
 class OllamaProvider:
@@ -35,11 +35,14 @@ class OllamaProvider:
             msg = "Ollama request timed out"
             raise LLMTimeoutError(msg) from exc
         except httpx.HTTPStatusError as exc:
-            msg = f"Ollama returned HTTP {exc.response.status_code}"
+            status_code = exc.response.status_code
+            msg = f"Ollama returned HTTP {status_code}"
+            if status_code >= 500:
+                raise LLMServerError(msg) from exc
             raise LLMError(msg) from exc
         except httpx.HTTPError as exc:
             msg = "Ollama request failed"
-            raise LLMError(msg) from exc
+            raise LLMConnectionError(msg) from exc
 
         data = response.json()
         content = data.get("message", {}).get("content")

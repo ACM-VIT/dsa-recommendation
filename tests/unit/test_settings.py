@@ -18,6 +18,11 @@ ENV_VARS = [
     "RULE_ENGINE_ENABLED",
     "MAX_CONCEPT_GAPS",
     "SOLUTION_LEAK_LINE_THRESHOLD",
+    "LLM_MAX_RETRIES",
+    "LLM_RETRY_BACKOFF_SECONDS",
+    "RATE_LIMIT_ENABLED",
+    "RATE_LIMIT_REQUESTS",
+    "RATE_LIMIT_WINDOW_SECONDS",
 ]
 
 
@@ -28,14 +33,15 @@ def test_settings_defaults(monkeypatch) -> None:  # type: ignore[no-untyped-def]
         monkeypatch.delenv(env_var, raising=False)
 
     monkeypatch.setenv("VLLM_API_KEY", "test-key")
+    monkeypatch.setenv("AI_SERVICE_API_KEY", "test-service-key")
     settings = Settings(_env_file=None)
 
     assert settings.llm_provider == "vllm"
     assert settings.ollama_base_url == "http://localhost:11434"
     assert settings.ollama_model == "qwen2.5-coder:7b"
-    assert settings.vllm_base_url == "https://ascuvum64parbo-8000.proxy.runpod.net"
+    assert settings.vllm_base_url == "http://localhost:8000"
     assert settings.vllm_model == "qwen2.5-coder:7b"
-    assert settings.llm_timeout_seconds == 600
+    assert settings.llm_timeout_seconds == 20
     assert settings.log_level == "INFO"
     assert settings.max_source_code_chars == 20000
     assert settings.max_problem_statement_chars == 4000
@@ -44,6 +50,11 @@ def test_settings_defaults(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     assert settings.max_concept_gaps == 8
     assert settings.solution_leak_line_threshold == 3
     assert settings.vllm_api_key == "test-key"
+    assert settings.llm_max_retries == 2
+    assert settings.llm_retry_backoff_seconds == 0.5
+    assert settings.rate_limit_enabled is True
+    assert settings.rate_limit_requests == 60
+    assert settings.rate_limit_window_seconds == 60
 
 
 def test_settings_load_from_env(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -55,6 +66,12 @@ def test_settings_load_from_env(monkeypatch) -> None:  # type: ignore[no-untyped
     monkeypatch.setenv("RULE_ENGINE_ENABLED", "false")
     monkeypatch.setenv("SOLUTION_LEAK_LINE_THRESHOLD", "4")
     monkeypatch.setenv("VLLM_API_KEY", "test-env-key")
+    monkeypatch.setenv("AI_SERVICE_API_KEY", "test-service-key")
+    monkeypatch.setenv("LLM_MAX_RETRIES", "5")
+    monkeypatch.setenv("LLM_RETRY_BACKOFF_SECONDS", "1.5")
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMIT_REQUESTS", "10")
+    monkeypatch.setenv("RATE_LIMIT_WINDOW_SECONDS", "30")
 
     settings = Settings(_env_file=None)
 
@@ -63,6 +80,11 @@ def test_settings_load_from_env(monkeypatch) -> None:  # type: ignore[no-untyped
     assert settings.max_problem_statement_chars == 1200
     assert settings.rule_engine_enabled is False
     assert settings.solution_leak_line_threshold == 4
+    assert settings.llm_max_retries == 5
+    assert settings.llm_retry_backoff_seconds == 1.5
+    assert settings.rate_limit_enabled is False
+    assert settings.rate_limit_requests == 10
+    assert settings.rate_limit_window_seconds == 30
 
 
 def test_ollama_only_starts_without_provider_keys(monkeypatch) -> None:
@@ -70,6 +92,7 @@ def test_ollama_only_starts_without_provider_keys(monkeypatch) -> None:
 
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.delenv("VLLM_API_KEY", raising=False)
+    monkeypatch.setenv("AI_SERVICE_API_KEY", "test-service-key")
     settings = Settings(_env_file=None)
 
     assert settings.llm_provider == "ollama"
@@ -81,6 +104,17 @@ def test_vllm_without_api_key_raises(monkeypatch) -> None:
 
     monkeypatch.setenv("LLM_PROVIDER", "vllm")
     monkeypatch.delenv("VLLM_API_KEY", raising=False)
+    monkeypatch.setenv("AI_SERVICE_API_KEY", "test-service-key")
 
     with pytest.raises(Exception, match="VLLM_API_KEY"):
+        Settings(_env_file=None)
+
+
+def test_ai_service_api_key_is_required(monkeypatch) -> None:
+    """Settings raise a clear error when AI_SERVICE_API_KEY is missing."""
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.delenv("AI_SERVICE_API_KEY", raising=False)
+
+    with pytest.raises(Exception, match="AI_SERVICE_API_KEY"):
         Settings(_env_file=None)

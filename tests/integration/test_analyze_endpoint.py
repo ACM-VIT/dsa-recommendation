@@ -1,15 +1,21 @@
 """HTTP integration tests for the /analyze endpoint."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api import rate_limiter
 from app.api.deps import get_analyze_submission
+from app.config.settings import get_settings
 from app.llm.base import LLMTimeoutError
 from app.main import app
 from app.models.request_schemas import AnalyzeRequest
 from app.models.response_schemas import AnalyzeResponse, ErrorResponse
 from app.orchestrator import orchestrator
 from tests.fixtures.sample_payloads import VALID_WRONG_ANSWER_PAYLOAD
+
+AUTH_HEADERS = {"Authorization": f"Bearer {get_settings().ai_service_api_key}"}
 
 
 class FakeLLMClient:
@@ -51,15 +57,17 @@ def fake_llm(monkeypatch):
     FakeLLMClient.exception = None
     monkeypatch.setattr(orchestrator, "LLMClient", FakeLLMClient)
     app.dependency_overrides.clear()
+    rate_limiter.reset()
     yield FakeLLMClient
     app.dependency_overrides.clear()
+    rate_limiter.reset()
 
 
 @pytest.fixture
 def client() -> TestClient:
-    """Return a FastAPI test client."""
+    """Return a FastAPI test client authenticated with a valid service API key."""
 
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
 
 def _assert_no_stack_trace(response_text: str) -> None:
@@ -204,3 +212,156 @@ def test_unhandled_route_exception_returns_sanitized_500(client: TestClient) -> 
     assert parsed.message == "An internal error occurred."
     assert "secret internal failure" not in response.text
     _assert_no_stack_trace(response.text)
+
+
+def test_analyze_with_valid_api_key_returns_200(
+    client: TestClient,
+    fake_llm,
+) -> None:
+    """A correct Authorization bearer token is accepted and processes normally."""
+
+    response = client.post("/analyze", json=VALID_WRONG_ANSWER_PAYLOAD)
+
+    assert response.status_code == 200
+    parsed = AnalyzeResponse.model_validate(response.json())
+    assert parsed.processing_status == "completed"
+    _assert_no_stack_trace(response.text)
+
+
+def test_analyze_without_api_key_returns_401(fake_llm) -> None:
+    """A request with no Authorization header is rejected before processing."""
+
+    unauthenticated_client = TestClient(app, raise_server_exceptions=False)
+
+    response = unauthenticated_client.post("/analyze", json=VALID_WRONG_ANSWER_PAYLOAD)
+
+    assert response.status_code == 401
+    assert response.headers.get("www-authenticate") == "Bearer"
+    assert fake_llm.calls == 0
+    _assert_no_stack_trace(response.text)
+
+
+def test_analyze_with_invalid_api_key_returns_401(fake_llm) -> None:
+    """A request with a wrong bearer token is rejected before processing."""
+
+    unauthenticated_client = TestClient(
+        app,
+        raise_server_exceptions=False,
+        headers={"Authorization": "Bearer wrong-key"},
+    )
+
+    response = unauthenticated_client.post("/analyze", json=VALID_WRONG_ANSWER_PAYLOAD)
+
+    assert response.status_code == 401
+    assert response.headers.get("www-authenticate") == "Bearer"
+    assert fake_llm.calls == 0
+    _assert_no_stack_trace(response.text)
+
+
+def test_health_does_not_require_authentication() -> None:
+    """GET /health stays public and does not require an API key."""
+
+    unauthenticated_client = TestClient(app, raise_server_exceptions=False)
+
+    response = unauthenticated_client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_analyze_returns_429_when_rate_limit_exceeded(
+    client: TestClient,
+    fake_llm,
+    monkeypatch,
+) -> None:
+    """Requests beyond the configured limit for one identity get HTTP 429."""
+
+    monkeypatch.setattr(get_settings(), "rate_limit_requests", 2)
+
+    first = client.post("/analyze", json=VALID_WRONG_ANSWER_PAYLOAD)
+    second = client.post("/analyze", json=VALID_WRONG_ANSWER_PAYLOAD)
+    third = client.post("/analyze", json=VALID_WRONG_ANSWER_PAYLOAD)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429
+    assert "retry-after" in {k.lower() for k in third.headers}
+    _assert_no_stack_trace(third.text)
+
+
+def test_analyze_stream_matches_non_streaming_contract(
+    client: TestClient,
+    fake_llm,
+) -> None:
+    """POST /analyze/stream emits chunk events then a complete event with full AnalyzeResponse."""
+
+    response = client.post("/analyze/stream", json=VALID_WRONG_ANSWER_PAYLOAD)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    events = _parse_sse_events(response.text)
+    event_names = [name for name, _ in events]
+
+    assert event_names.count("chunk") > 0
+    assert event_names[-1] == "complete"
+
+    complete_payload = json.loads(events[-1][1])
+    parsed = AnalyzeResponse.model_validate(complete_payload)
+    assert parsed.submission_id == VALID_WRONG_ANSWER_PAYLOAD["submission_id"]
+    assert parsed.processing_status == "completed"
+    assert parsed.error_category == "edge_case_missing"
+    _assert_no_stack_trace(response.text)
+
+
+def test_analyze_stream_requires_authentication() -> None:
+    """POST /analyze/stream enforces the same auth as /analyze."""
+
+    unauthenticated_client = TestClient(app, raise_server_exceptions=False)
+
+    response = unauthenticated_client.post("/analyze/stream", json=VALID_WRONG_ANSWER_PAYLOAD)
+
+    assert response.status_code == 401
+
+
+def test_analyze_stream_reconstructed_text_matches_non_streaming(
+    client: TestClient,
+    fake_llm,
+) -> None:
+    """Chunked feedback/hint text reassembles to the same text /analyze returns."""
+
+    streamed = client.post("/analyze/stream", json=VALID_WRONG_ANSWER_PAYLOAD)
+    non_streamed = client.post("/analyze", json=VALID_WRONG_ANSWER_PAYLOAD)
+
+    events = _parse_sse_events(streamed.text)
+    feedback_chunks = [
+        json.loads(data)["delta"] for name, data in events
+        if name == "chunk" and json.loads(data)["field"] == "feedback_text"
+    ]
+    hint_chunks = [
+        json.loads(data)["delta"] for name, data in events
+        if name == "chunk" and json.loads(data)["field"] == "hint_text"
+    ]
+
+    non_streamed_body = non_streamed.json()
+    assert " ".join(feedback_chunks) == non_streamed_body["feedback_text"]
+    assert " ".join(hint_chunks) == non_streamed_body["hint_text"]
+
+
+def _parse_sse_events(raw_text: str) -> list[tuple[str, str]]:
+    """Parse `event: X\\ndata: Y\\n\\n` blocks into (event, data) pairs."""
+
+    events: list[tuple[str, str]] = []
+    for block in raw_text.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        event_name = None
+        data_line = None
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                event_name = line.removeprefix("event: ")
+            elif line.startswith("data: "):
+                data_line = line.removeprefix("data: ")
+        if event_name is not None and data_line is not None:
+            events.append((event_name, data_line))
+    return events

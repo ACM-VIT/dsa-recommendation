@@ -42,26 +42,3 @@ def register_exception_handlers(app: FastAPI) -> None:
             submission_id=submission_id_var.get(),
         )
         return JSONResponse(status_code=500, content=body.model_dump())
-    @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(
-            request: Request,
-            exc: RequestValidationError,
-        ) -> JSONResponse:
-
-            logger.info(
-                "request validation failed",
-                extra={
-                    "path": request.url.path,
-                    "errors": exc.errors(),
-                },
-            )
-
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "error_code": "validation_error",
-                    "message": "Request validation failed.",
-                    "errors": exc.errors(),   # <-- ADD THIS
-                    "submission_id": submission_id_var.get(),
-                },
-            )

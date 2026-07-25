@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import lightgbm as lgb
+import numpy as np
 import pandas as pd
 
 from pipeline.recommender.models.user_graph import UserGraph
@@ -171,6 +172,24 @@ class LightGBMRanker:
         metadata file was found alongside the model."""
         return self._metadata
 
+    def _prepare_feature_matrix(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Selects and casts exactly the columns the booster expects, in
+        its trained order -- categorical columns to pandas 'category'
+        dtype, everything else to float64. Shared by score_candidates()
+        (live single-candidate path) and score_dataframe() (offline/batch
+        path) so this logic is defined in exactly one place."""
+        missing = set(self._feature_names) - set(df.columns)
+        if missing:
+            raise LightGBMRankerError(f"input is missing required feature columns: {sorted(missing)}")
+
+        X = df[self._feature_names].copy()
+        for col in self._feature_names:
+            if col in self._categorical_names:
+                X[col] = X[col].astype("category")
+            else:
+                X[col] = X[col].astype("float64")
+        return X
+
     def score_candidates(
         self, candidates: list[MergedCandidate], graph: UserGraph, plan: DifficultyPlan,
         catalog_metadata_by_problem_id: Optional[dict] = None,
@@ -202,17 +221,7 @@ class LightGBMRanker:
 
         try:
             df = pd.DataFrame(rows)
-            missing = set(self._feature_names) - set(df.columns)
-            if missing:
-                raise LightGBMRankerError(f"extracted features are missing columns: {sorted(missing)}")
-
-            X = df[self._feature_names].copy()
-            for col in self._feature_names:
-                if col in self._categorical_names:
-                    X[col] = X[col].astype("category")
-                else:
-                    X[col] = X[col].astype("float64")
-
+            X = self._prepare_feature_matrix(df)
             scores = self._booster.predict(X)
         except LightGBMRankerError:
             raise
@@ -223,6 +232,36 @@ class LightGBMRanker:
             raise LightGBMRankerError("LightGBM produced NaN prediction(s)")
 
         return [ScoredCandidate(candidate=c, score=float(s)) for c, s in zip(candidates, scores)]
+
+    def score_dataframe(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        Scores an already-feature-extracted DataFrame (one row per
+        candidate) directly with the loaded booster -- the batch/offline
+        entry point used by evaluation/ to score
+        training/artifacts/validation.parquet without reconstructing
+        UserGraph/MergedCandidate objects for data that was already
+        flattened by the training pipeline. Does not recompute or look up
+        any feature; `df` must already carry every column
+        FeatureRegistry.model_matrix_features() declares.
+
+        Raises LightGBMRankerError if the model isn't loaded, a required
+        feature column is missing, or inference itself fails/produces NaN.
+        """
+        if not self.is_loaded:
+            raise LightGBMRankerError("score_dataframe() called before load_model() succeeded")
+
+        try:
+            X = self._prepare_feature_matrix(df)
+            scores = self._booster.predict(X)
+        except LightGBMRankerError:
+            raise
+        except Exception as exc:
+            raise LightGBMRankerError(f"LightGBM inference failed: {exc}") from exc
+
+        if pd.isna(scores).any():
+            raise LightGBMRankerError("LightGBM produced NaN prediction(s)")
+
+        return scores
 
     def rerank(
         self, candidates: list[MergedCandidate], graph: UserGraph, plan: DifficultyPlan,

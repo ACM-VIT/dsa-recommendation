@@ -3,7 +3,8 @@ tests/test_lightgbm_ranker.py
 
 Tests pipeline/recommender/services/lightgbm_ranker.py: model loading
 (success + failure modes), feature-schema validation against
-FeatureRegistry, scoring/reranking, config-driven ranker switching
+FeatureRegistry, live scoring/reranking (score_candidates/rerank) and
+offline/batch scoring (score_dataframe), config-driven ranker switching
 (RANKER=heuristic/lightgbm/hybrid), and automatic fallback to the
 heuristic ranker on any failure.
 
@@ -131,6 +132,20 @@ class LightGBMRankerTestBase(unittest.TestCase):
     def tearDown(self):
         lr.reset_lightgbm_ranker_cache()
 
+    def _fake_feature_frame(self, n_rows: int = 10) -> pd.DataFrame:
+        """An already-feature-extracted DataFrame (validation.parquet's
+        shape) for score_dataframe()'s offline/batch path -- distinct from
+        _make_candidates()/_make_graph() above, which build live objects
+        for the score_candidates()/rerank() path."""
+        rng = np.random.RandomState(1)
+        data = {}
+        for name in self.feature_names:
+            if name in self.categorical_names:
+                data[name] = rng.choice(["beginner", "mid", "advanced"], size=n_rows)
+            else:
+                data[name] = rng.uniform(0, 1, size=n_rows)
+        return pd.DataFrame(data)
+
 
 class TestLoadModel(LightGBMRankerTestBase):
 
@@ -153,6 +168,51 @@ class TestLoadModel(LightGBMRankerTestBase):
             ranker.load_model()
         self.assertIn("feature order", str(ctx.exception))
         self.assertFalse(ranker.is_loaded)
+
+
+class TestScoreDataframe(LightGBMRankerTestBase):
+    """score_dataframe() -- the offline/batch scoring path evaluation/
+    uses to score an already-feature-extracted DataFrame (e.g.
+    validation.parquet) directly, without reconstructing UserGraph/
+    MergedCandidate objects. Shares _prepare_feature_matrix() with
+    score_candidates(); TestScoreAndRerank below covers the live path."""
+
+    def setUp(self):
+        super().setUp()
+        self.ranker = lr.LightGBMRanker(model_path=self.valid_model_path)
+
+    def test_raises_before_load(self):
+        df = self._fake_feature_frame()
+        with self.assertRaises(lr.LightGBMRankerError):
+            self.ranker.score_dataframe(df)
+
+    def test_returns_one_score_per_row_no_nan(self):
+        self.ranker.load_model()
+        df = self._fake_feature_frame(n_rows=15)
+        scores = self.ranker.score_dataframe(df)
+        self.assertEqual(len(scores), 15)
+        self.assertFalse(np.isnan(scores).any())
+
+    def test_raises_on_missing_feature_column(self):
+        self.ranker.load_model()
+        df = self._fake_feature_frame().drop(columns=[self.feature_names[0]])
+        with self.assertRaises(lr.LightGBMRankerError):
+            self.ranker.score_dataframe(df)
+
+    def test_ignores_extra_columns_not_in_registry(self):
+        self.ranker.load_model()
+        df = self._fake_feature_frame()
+        df["query_id"] = "q1"
+        df["candidate_id"] = [f"c{i}" for i in range(len(df))]
+        scores = self.ranker.score_dataframe(df)
+        self.assertEqual(len(scores), len(df))
+
+    def test_deterministic_across_repeated_calls(self):
+        self.ranker.load_model()
+        df = self._fake_feature_frame(n_rows=20)
+        s1 = self.ranker.score_dataframe(df)
+        s2 = self.ranker.score_dataframe(df)
+        np.testing.assert_array_equal(s1, s2)
 
 
 class TestScoreAndRerank(LightGBMRankerTestBase):

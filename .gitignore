@@ -1,0 +1,46 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+env/
+
+.env
+.env.local
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.DS_Store
+Thumbs.db
+.env
+qdrant_storage_v2/
+# ==========================
+# DSA Engine generated artifacts
+# ==========================
+POSTMAN_GUIDE.md
+
+ API_ENDPOINTS.md 
+ ARCHITECTURE_QA.md 
+ BACKEND_ML_INTEGRATION.md 
+ STATEUPDATESERVICE_DECISION.md
+ pid_tags_scratch.json
+# Vector pool outputs
+data/vector_pool/
+vector_pool/
+.claude
+.postman
+POSTMAN_GUIDE.md
+
+# RGCN outputs
+pipeline/graphs/rgcn_artifacts/
+
+# Generated binary files
+*.parquet
+*.pt
+*.npy
+*.npz
+*.pickle
+*.pkl

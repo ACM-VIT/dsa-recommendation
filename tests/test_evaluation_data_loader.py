@@ -17,7 +17,8 @@ import unittest
 
 import pandas as pd
 
-from evaluation.data_loader import build_user_data, iter_query_groups
+from evaluation.data_loader import _POOL_COLUMNS, build_user_data, iter_query_groups
+from training.feature_registry import DataType, FeatureGroup, build_default_registry
 
 
 def _row(query_id, candidate_id, label, score, pools=()):
@@ -125,6 +126,30 @@ class TestBuildUserData(unittest.TestCase):
         r1 = build_user_data(df, score_column="score")
         r2 = build_user_data(df, score_column="score")
         self.assertEqual(r1, r2)
+
+
+class TestPoolColumnsSyncedWithRegistry(unittest.TestCase):
+    """_POOL_COLUMNS is derived directly from FeatureRegistry (not a
+    hand-maintained duplicate) -- this guards against a future edit
+    reintroducing a hardcoded list that could silently drift."""
+
+    def test_matches_boolean_pool_features_in_the_registry(self):
+        registry = build_default_registry()
+        expected = tuple(
+            f.name for f in registry.by_group(FeatureGroup.POOL)
+            if f.dtype == DataType.BOOLEAN
+        )
+        self.assertEqual(_POOL_COLUMNS, expected)
+
+    def test_excludes_non_boolean_pool_features(self):
+        # pool_count/max_pool_weight are FeatureGroup.POOL but NUMERICAL --
+        # must not appear among the per-candidate pool-membership columns.
+        self.assertNotIn("pool_count", _POOL_COLUMNS)
+        self.assertNotIn("max_pool_weight", _POOL_COLUMNS)
+
+    def test_every_pool_column_starts_with_from_pool_prefix(self):
+        for col in _POOL_COLUMNS:
+            self.assertTrue(col.startswith("from_pool_"), col)
 
 
 if __name__ == "__main__":

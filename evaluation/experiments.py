@@ -15,13 +15,14 @@ this evaluates came from the real training pipeline's validation split.
 """
 from __future__ import annotations
 
+import sys
 from typing import Any, Optional
 
 from evaluation.data_loader import build_user_data, load_validation_dataframe
 from evaluation.evaluator import OfflineEvaluator
 from evaluation.report import generate_markdown_report, print_cli_summary, save_json_summary
 
-from pipeline.recommender.services.lightgbm_ranker import LightGBMRanker
+from pipeline.recommender.services.lightgbm_ranker import LightGBMRanker, LightGBMRankerError
 
 from training.config import VALIDATION_DATASET_PATH
 
@@ -114,5 +115,45 @@ def run_validation_evaluation(validation_path=VALIDATION_DATASET_PATH, model_nam
     return run_experiment(heuristic_user_data, lightgbm_user_data, model_name=model_name, meta=meta)
 
 
+def main() -> int:
+    """CLI entry point: runs run_validation_evaluation() and translates the
+    two "nothing to evaluate yet" failure modes into a clear, actionable
+    message and a non-zero exit code -- rather than a raw traceback, and
+    WITHOUT silently falling back to a heuristic-only comparison (an
+    evaluation run that only ever evaluated the baseline would be
+    misleading, not a graceful degradation). Returns the process exit code
+    so tests can call this directly instead of spawning a subprocess."""
+    try:
+        # Passes the module-level VALIDATION_DATASET_PATH explicitly,
+        # read at call time -- run_validation_evaluation()'s own default
+        # parameter value is bound once at import time (the same
+        # early-binding gotcha documented in lightgbm_ranker.py), so
+        # relying on it here would silently ignore any later change to
+        # this module's VALIDATION_DATASET_PATH (e.g. test monkeypatching).
+        run_validation_evaluation(validation_path=VALIDATION_DATASET_PATH)
+    except LightGBMRankerError as exc:
+        print(
+            "No trained LightGBM model found (or it failed to load).\n"
+            f"  Reason: {exc}\n\n"
+            "Run:\n\n"
+            "    python -m training.train_lightgbm\n\n"
+            "before running offline evaluation.",
+            file=sys.stderr,
+        )
+        return 1
+    except FileNotFoundError as exc:
+        print(
+            "Validation dataset not found.\n"
+            f"  Reason: {exc}\n\n"
+            "Run the training pipeline to generate "
+            "training/artifacts/validation.parquet (e.g.\n"
+            "    python -m training.generate_production_dataset\n"
+            ") before running offline evaluation.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 if __name__ == "__main__":
-    run_validation_evaluation()
+    sys.exit(main())

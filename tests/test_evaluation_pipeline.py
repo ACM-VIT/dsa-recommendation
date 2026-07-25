@@ -15,9 +15,11 @@ Run:
 
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -174,6 +176,83 @@ class TestRunValidationEvaluationEndToEnd(unittest.TestCase):
             for entry in heuristic_data
         )
         self.assertTrue(found_non_trivial_case, "test data must include at least one group with mixed grades")
+
+
+class TestMainMissingModelHandling(unittest.TestCase):
+    """evaluation.experiments.main() -- the CLI entry point's handling of
+    "nothing trained/generated yet", which must never silently fall back
+    to a heuristic-only comparison (see module docstring's rationale)."""
+
+    @classmethod
+    def setUpClass(cls):
+        registry = build_default_registry()
+        cls.feature_names = [f.name for f in registry.model_matrix_features()]
+        cls.categorical_names = [f.name for f in registry.categorical_features()]
+
+        cls._tmpdir = tempfile.TemporaryDirectory()
+        tmp_path = Path(cls._tmpdir.name)
+        cls.df = _build_validation_dataframe(cls.feature_names, cls.categorical_names)
+        cls.validation_path = tmp_path / "validation.parquet"
+        cls.df.to_parquet(cls.validation_path, index=False)
+
+        cls.model_path = tmp_path / "model.txt"
+        _train_tiny_model(cls.feature_names, cls.categorical_names, cls.df, cls.model_path)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmpdir.cleanup()
+
+    def setUp(self):
+        lr.reset_lightgbm_ranker_cache()
+
+    def tearDown(self):
+        lr.reset_lightgbm_ranker_cache()
+
+    def test_missing_model_exits_nonzero_with_actionable_message(self):
+        with patch("pipeline.recommender.services.lightgbm_ranker.LIGHTGBM_MODEL_PATH",
+                   Path("/nonexistent/lightgbm_model.txt")):
+            with patch("evaluation.experiments.VALIDATION_DATASET_PATH", self.validation_path):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    exit_code = experiments.main()
+
+        self.assertEqual(exit_code, 1)
+        message = stderr.getvalue()
+        self.assertIn("No trained LightGBM model found", message)
+        self.assertIn("python -m training.train_lightgbm", message)
+
+    def test_missing_model_does_not_fall_back_to_heuristic_only(self):
+        """The failure must be a hard stop, not a quiet heuristic-only run:
+        no report/summary files should appear for a run that never
+        actually evaluated LightGBM."""
+        reports_dir = Path(self._tmpdir.name) / "reports_missing_model"
+        with patch("pipeline.recommender.services.lightgbm_ranker.LIGHTGBM_MODEL_PATH",
+                   Path("/nonexistent/lightgbm_model.txt")):
+            with patch("evaluation.experiments.VALIDATION_DATASET_PATH", self.validation_path):
+                with patch.object(report_module, "REPORTS_DIR", reports_dir):
+                    with redirect_stderr(io.StringIO()):
+                        experiments.main()
+
+        self.assertFalse(reports_dir.exists(), "no report should be written when evaluation never ran")
+
+    def test_missing_validation_dataset_exits_nonzero_with_actionable_message(self):
+        with patch("pipeline.recommender.services.lightgbm_ranker.LIGHTGBM_MODEL_PATH", self.model_path):
+            with patch("evaluation.experiments.VALIDATION_DATASET_PATH", Path("/nonexistent/validation.parquet")):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    exit_code = experiments.main()
+
+        self.assertEqual(exit_code, 1)
+        message = stderr.getvalue()
+        self.assertIn("Validation dataset not found", message)
+
+    def test_successful_run_still_exits_zero(self):
+        reports_dir = Path(self._tmpdir.name) / "reports_success"
+        with patch("pipeline.recommender.services.lightgbm_ranker.LIGHTGBM_MODEL_PATH", self.model_path):
+            with patch("evaluation.experiments.VALIDATION_DATASET_PATH", self.validation_path):
+                with patch.object(report_module, "REPORTS_DIR", reports_dir):
+                    exit_code = experiments.main()
+        self.assertEqual(exit_code, 0)
 
 
 if __name__ == "__main__":

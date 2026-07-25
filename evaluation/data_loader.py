@@ -33,14 +33,20 @@ from typing import Iterator
 import pandas as pd
 
 from training.config import VALIDATION_DATASET_PATH
+from training.feature_registry import DataType, FeatureGroup, build_default_registry
 
-# Priority order used only to pick ONE pool label per candidate for
-# pool_contribution's {item: pool_name} input -- a candidate can be
-# proposed by multiple pools (pool_count > 1), but pool attribution only
-# tracks a single label per item. Order is otherwise arbitrary.
-_POOL_COLUMNS = (
-    "from_pool_A", "from_pool_B_C", "from_pool_D", "from_pool_E",
-    "from_pool_F", "from_pool_G", "from_pool_vector",
+# The from_pool_<X> boolean columns, derived from FeatureRegistry rather
+# than hand-maintained here -- FeatureGroup.POOL also contains pool_count/
+# max_pool_weight (NUMERICAL, not per-pool booleans), so this filters to
+# exactly the BOOLEAN-typed pool features. Single source of truth: if a
+# pool is ever added/removed in the registry, this list updates itself,
+# nothing here needs editing. Order is otherwise arbitrary -- only used to
+# pick ONE pool label per candidate for pool_contribution's {item: pool_name}
+# input, since a candidate can be proposed by multiple pools at once
+# (pool_count > 1) but pool attribution only tracks a single label per item.
+_POOL_COLUMNS = tuple(
+    f.name for f in build_default_registry().by_group(FeatureGroup.POOL)
+    if f.dtype == DataType.BOOLEAN
 )
 
 

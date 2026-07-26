@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
 # Qdrant / Neo4j credentials -- imported from db_env.py, the ONE place in
@@ -44,10 +45,15 @@ from db_env import (
     NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE,
     NEO4J_INSTANCEID, NEO4J_INSTANCENAME,
 )
+load_dotenv()
 # Backward-compat alias: existing code in this repo (sources.py etc) reads
 # C.NEO4J_USER -- db_env.py's canonical name is NEO4J_USERNAME (matching
 # Neo4j Aura's own credential export naming). Keep both working.
-NEO4J_USER = NEO4J_USERNAME
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
+
+# NEVER hardcode a password default string here
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
 
 # ---------------------------------------------------------------------------

@@ -216,7 +216,16 @@ class TestEvaluateBatchAveraging(unittest.TestCase):
         summary = evaluator.evaluate_batch(data)
         self.assertAlmostEqual(summary["mrr"], 0.5)
 
-    def test_two_different_pools_each_averaged_independently(self):
+    def test_two_different_pools_each_averaged_over_all_pool_tracking_users(self):
+        """Regression test for a real bug: a user who supplies item_pools
+        but draws 0% from a given pool must count as a 0.0 contribution to
+        that pool's average, not be silently excluded from its denominator.
+        Two users each supply item_pools (one 100% pool X, one 100% pool
+        Y); a third supplies none at all. pool_X_ratio/pool_Y_ratio must
+        each be averaged over the two pool-tracking users (denominator 2),
+        not over "however many users happened to touch this specific pool"
+        (which would wrongly give 1.0/1.0, as if every pool-tracking user
+        always drew from every pool)."""
         evaluator = OfflineEvaluator(k_values=[5])
         data = [
             {"recommended": ["a"], "relevant": ["a"], "item_pools": {"a": "X"}},
@@ -224,9 +233,42 @@ class TestEvaluateBatchAveraging(unittest.TestCase):
             {"recommended": ["c"], "relevant": ["c"]},   # no item_pools
         ]
         summary = evaluator.evaluate_batch(data)
-        # Each pool ratio was only ever contributed by exactly one user, at 1.0.
-        self.assertAlmostEqual(summary["pool_X_ratio"], 1.0)
-        self.assertAlmostEqual(summary["pool_Y_ratio"], 1.0)
+        # (1.0 + 0.0) / 2 pool-tracking users -- not 1.0.
+        self.assertAlmostEqual(summary["pool_X_ratio"], 0.5)
+        self.assertAlmostEqual(summary["pool_Y_ratio"], 0.5)
+
+    def test_pool_ratio_denominator_is_shared_across_all_pools(self):
+        """Three users all supply item_pools; each draws from a different
+        single pool. Every pool's ratio must be averaged over all three
+        (the shared pool-tracking population), not just the one user who
+        happened to touch that specific pool."""
+        evaluator = OfflineEvaluator(k_values=[5])
+        data = [
+            {"recommended": ["a"], "relevant": ["a"], "item_pools": {"a": "X"}},
+            {"recommended": ["b"], "relevant": ["b"], "item_pools": {"b": "Y"}},
+            {"recommended": ["c"], "relevant": ["c"], "item_pools": {"c": "Z"}},
+        ]
+        summary = evaluator.evaluate_batch(data)
+        third = 1.0 / 3
+        self.assertAlmostEqual(summary["pool_X_ratio"], third)
+        self.assertAlmostEqual(summary["pool_Y_ratio"], third)
+        self.assertAlmostEqual(summary["pool_Z_ratio"], third)
+
+    def test_partial_pool_overlap_between_two_users(self):
+        """One user draws half from X, half from Y; another draws entirely
+        from X. pool_X_ratio must be (0.5 + 1.0) / 2 = 0.75, and
+        pool_Y_ratio must be (0.5 + 0.0) / 2 = 0.25 -- the second user's
+        zero contribution to Y must count in Y's average, not be dropped."""
+        evaluator = OfflineEvaluator(k_values=[5])
+        data = [
+            {"recommended": ["a", "b"], "relevant": ["a"],
+             "item_pools": {"a": "X", "b": "Y"}},
+            {"recommended": ["c", "d"], "relevant": ["c"],
+             "item_pools": {"c": "X", "d": "X"}},
+        ]
+        summary = evaluator.evaluate_batch(data)
+        self.assertAlmostEqual(summary["pool_X_ratio"], 0.75)
+        self.assertAlmostEqual(summary["pool_Y_ratio"], 0.25)
 
     def test_empty_user_data_returns_empty_summary(self):
         evaluator = OfflineEvaluator(k_values=[5])

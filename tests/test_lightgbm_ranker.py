@@ -249,6 +249,85 @@ class TestScoreAndRerank(LightGBMRankerTestBase):
         self.assertEqual(scores, sorted(scores, reverse=True))
 
 
+class TestCatalogMetadataReachesFeatureExtraction(LightGBMRankerTestBase):
+    """Proves score_candidates()'s catalog_metadata_by_problem_id parameter
+    actually reaches extract_features() per-candidate (keyed correctly by
+    problem_id, defaulting to None/{} when absent) -- previously nothing
+    in recommend.py ever populated this parameter, so it was always {},
+    and company_tag_count/frequency/rating/asked_by_faang were always NaN
+    at inference time even though the plumbing already existed."""
+
+    def setUp(self):
+        super().setUp()
+        self.ranker = lr.LightGBMRanker(model_path=self.valid_model_path)
+        self.ranker.load_model()
+        self.graph = _make_graph()
+        self.plan = DifficultyPlan(avg_mastery=0.4, level="mid")
+        self.candidates = _make_candidates()
+
+    def test_catalog_metadata_passed_per_candidate_by_problem_id(self):
+        catalog_metadata_by_problem_id = {
+            "p1": {"companies": ["Google", "Amazon"], "frequency": 0.9,
+                   "rating": 0.95, "asked_by_faang": True},
+        }
+        with patch(
+            "pipeline.recommender.services.lightgbm_ranker.extract_features",
+            wraps=lr.extract_features,
+        ) as spy:
+            self.ranker.score_candidates(
+                self.candidates, self.graph, self.plan,
+                catalog_metadata_by_problem_id=catalog_metadata_by_problem_id,
+            )
+
+        seen_by_problem_id = {
+            call.args[2].problem_id: call.kwargs["catalog_metadata"]
+            for call in spy.call_args_list
+        }
+        self.assertEqual(seen_by_problem_id["p1"], catalog_metadata_by_problem_id["p1"])
+        # p2/p3 have no entry -- must be passed through as None, not fabricated.
+        self.assertIsNone(seen_by_problem_id["p2"])
+        self.assertIsNone(seen_by_problem_id["p3"])
+
+    def test_company_tag_count_populated_in_resulting_feature_matrix_when_catalog_metadata_present(self):
+        catalog_metadata_by_problem_id = {
+            "p1": {"companies": ["Google", "Amazon"], "frequency": 0.9,
+                   "rating": 0.95, "asked_by_faang": True},
+        }
+        captured_dfs = []
+        real_prepare = self.ranker._prepare_feature_matrix
+
+        def _capture(df):
+            captured_dfs.append(df.copy())
+            return real_prepare(df)
+
+        with patch.object(self.ranker, "_prepare_feature_matrix", side_effect=_capture):
+            self.ranker.score_candidates(
+                self.candidates, self.graph, self.plan,
+                catalog_metadata_by_problem_id=catalog_metadata_by_problem_id,
+            )
+
+        df = captured_dfs[0]
+        p1_row = df[df["candidate_id"] == "p1"].iloc[0] if "candidate_id" in df.columns else None
+        if p1_row is None:
+            # candidate_id may not be a raw column; fall back to positional
+            # match since _make_candidates()'s first candidate is p1.
+            p1_row = df.iloc[0]
+        self.assertEqual(p1_row["company_tag_count"], 2.0)
+        self.assertEqual(p1_row["frequency"], 0.9)
+        self.assertEqual(p1_row["rating"], 0.95)
+        self.assertTrue(p1_row["asked_by_faang"])
+
+    def test_no_catalog_metadata_leaves_columns_unfabricated(self):
+        with patch(
+            "pipeline.recommender.services.lightgbm_ranker.extract_features",
+            wraps=lr.extract_features,
+        ) as spy:
+            self.ranker.score_candidates(self.candidates, self.graph, self.plan)
+
+        for call in spy.call_args_list:
+            self.assertIsNone(call.kwargs["catalog_metadata"])
+
+
 class TestModelMetadataIntegration(LightGBMRankerTestBase):
     """get_model_info() -- metadata loaded alongside the model, and the
     missing-metadata fallback (model still loads/serves fine without it)."""

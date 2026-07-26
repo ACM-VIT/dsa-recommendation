@@ -37,6 +37,13 @@ TRAINING_METRICS_PATH = ARTIFACTS_DIR / "training_metrics.json"
 TRAINING_CONFIG_PATH = ARTIFACTS_DIR / "training_config.json"
 MODEL_METADATA_PATH = ARTIFACTS_DIR / "model_metadata.json"
 
+# The real, git-tracked raw problem manifest (2913 records) -- the same
+# source pipeline/ingestion/ingest.py's build_vector_pool() transforms into
+# the Qdrant vector pool, and the source training/feature_registry.py's
+# company_tag_count/frequency/rating/asked_by_faang entries already cite.
+# See training/catalog_metadata.py.
+CATALOG_MANIFEST_PATH = REPO_ROOT / "data" / "1000_manifest_final.json"
+
 # Determinism: every random operation in this pipeline (train/validation
 # splitting, any future sampling) must seed from this single constant, so
 # two runs against the same source data produce byte-identical output.

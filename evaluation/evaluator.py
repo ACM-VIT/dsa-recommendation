@@ -86,10 +86,17 @@ class OfflineEvaluator:
         Returns:
             {metric_name: average_score}, one entry per metric
             evaluate_user() can produce. Each metric is averaged only over
-            the users that actually contributed a value for it (see the
-            per-metric `counts` below) -- not every user necessarily
-            supplies item_pools, so pool_<name>_ratio metrics are averaged
-            over a smaller denominator than e.g. mrr. Empty input returns
+            the users that actually contributed a value for it -- not
+            every user necessarily supplies item_pools, so pool_<name>_ratio
+            metrics are averaged over a smaller denominator than e.g. mrr.
+            All pool_<name>_ratio metrics share ONE denominator (the number
+            of users who supplied item_pools at all), not a separate count
+            per pool: pool_contribution() only emits a key for pools a user
+            actually drew from, so a user who supplied item_pools but got
+            zero recommendations from pool Y would otherwise be silently
+            excluded from pool_Y_ratio's denominator (rather than counted
+            as a 0.0 contribution) -- inflating pool_Y_ratio whenever
+            different users draw from different pools. Empty input returns
             an empty dict.
         """
         if not user_data:
@@ -97,6 +104,7 @@ class OfflineEvaluator:
 
         accumulated = {}
         counts = {}
+        pool_ratio_users = 0   # shared denominator for every pool_<name>_ratio metric
 
         for entry in user_data:
             res = self.evaluate_user(
@@ -105,18 +113,28 @@ class OfflineEvaluator:
                 item_pools=entry.get('item_pools'),
                 graded_relevance=entry.get('graded_relevance'),
             )
+            if entry.get('item_pools'):
+                pool_ratio_users += 1
 
             # Sum up scores across users, tracking a separate count per
             # metric -- optional metrics (e.g. pool_*_ratio) are only
             # present for users whose entry had item_pools, so they must be
             # averaged over the users that actually contributed them, not
-            # over every user in the batch.
+            # over every user in the batch. pool_<name>_ratio keys are
+            # excluded from this per-key counting -- they share
+            # pool_ratio_users instead (see docstring above).
             for key, val in res.items():
                 if isinstance(val, (int, float)):
                     accumulated[key] = accumulated.get(key, 0.0) + val
-                    counts[key] = counts.get(key, 0) + 1
+                    if not (key.startswith('pool_') and key.endswith('_ratio')):
+                        counts[key] = counts.get(key, 0) + 1
 
         # Compute average (mean) for each metric over the users that
         # actually contributed it.
-        summary = {key: total / counts[key] for key, total in accumulated.items()}
+        summary = {}
+        for key, total in accumulated.items():
+            if key.startswith('pool_') and key.endswith('_ratio'):
+                summary[key] = total / pool_ratio_users if pool_ratio_users else 0.0
+            else:
+                summary[key] = total / counts[key]
         return summary

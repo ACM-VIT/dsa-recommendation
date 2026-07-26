@@ -52,6 +52,43 @@ def _load_offline_concept_graph():
                    "offline edges until this succeeds.", exc.__class__.__name__, exc)
 
 
+@app.on_event("startup")
+def _warm_lightgbm_ranker():
+    """
+    Best-effort preload of the LightGBM ranker (pipeline/recommender/
+    services/lightgbm_ranker.py::get_lightgbm_ranker() -- the same
+    process-wide singleton get_recommendations()'s rank_candidates() uses
+    under RANKER=lightgbm/hybrid), so a missing/broken model is discovered
+    and logged at startup instead of on whichever request happens to
+    trigger the first lazy load.
+
+    Never prevents the app from starting, and never disables the
+    heuristic ranker: get_lightgbm_ranker() already caches a failed load
+    (no repeated disk IO on later requests), and rank_candidates() already
+    falls back to HeuristicRanker automatically whenever the LightGBM
+    ranker is unavailable -- this hook only makes that outcome visible at
+    startup rather than silently on first use.
+
+    Catches bare Exception, not just LightGBMRankerError: get_lightgbm_ranker()
+    constructs a LightGBMRanker() before its own try/except begins (see
+    lightgbm_ranker.py), so a failure during construction itself --
+    e.g. FeatureRegistry construction -- would otherwise propagate
+    uncaught here and abort startup, exactly the outcome this hook exists
+    to prevent. Same breadth of catch _load_offline_concept_graph above
+    already uses for the identical reason.
+    """
+    from pipeline.recommender.services.lightgbm_ranker import get_lightgbm_ranker
+    try:
+        ranker = get_lightgbm_ranker()
+        info = ranker.get_model_info() or {}
+        log.info("LightGBM ranker warmed at startup: version=%s best_iteration=%s",
+                 info.get("model_version"), info.get("best_iteration"))
+    except Exception as exc:
+        log.warning("LightGBM ranker unavailable at startup (%s: %s) -- RANKER=lightgbm/hybrid "
+                    "will fall back to the heuristic ranker until this is resolved.",
+                    exc.__class__.__name__, exc)
+
+
 @app.get("/")
 def root():
     """

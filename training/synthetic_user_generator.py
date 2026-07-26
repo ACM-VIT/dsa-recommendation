@@ -275,7 +275,8 @@ class SyntheticUserGenerator:
     """
 
     def __init__(self, qdrant, topic_slugs: list[str], config: Optional[SimulatorConfig] = None,
-                 cc_edges: Optional[dict[str, list[ConceptConceptEdge]]] = None):
+                 cc_edges: Optional[dict[str, list[ConceptConceptEdge]]] = None,
+                 catalog_metadata: Optional[dict] = None):
         """
         cc_edges: the real offline concept-concept graph (PREREQ + COOCCURS),
         as returned by load_real_concept_graph() -- attached in full to every
@@ -285,11 +286,20 @@ class SyntheticUserGenerator:
         to look up prerequisites for candidate concepts the user hasn't
         necessarily touched yet).
 
-        Defaults to {} (no cc_edges) rather than loading them here, so this
-        class stays offline-testable with a fake Qdrant and no DB connection
-        -- exactly the FakeQdrant/FakeRedis convention already used across
-        this test suite. Callers generating a real bootstrap dataset should
-        explicitly pass load_real_concept_graph().
+        catalog_metadata: the real static problem-catalog metadata
+        (company_tag_count/frequency/rating/asked_by_faang), as returned by
+        training.catalog_metadata.load_catalog_metadata_by_problem_id() --
+        attached to every emitted RecommendationEvent so
+        feature_extractor.py's catalog-metadata features are populated
+        from real data instead of defaulting to NaN.
+
+        Both default to {}/None (nothing loaded here) rather than fetching
+        real data in the constructor, so this class stays offline-testable
+        with a fake Qdrant and no DB connection -- exactly the
+        FakeQdrant/FakeRedis convention already used across this test
+        suite. Callers generating a real bootstrap dataset should
+        explicitly pass load_real_concept_graph()/
+        load_catalog_metadata_by_problem_id().
         """
         if not topic_slugs:
             raise ValueError("topic_slugs must be a non-empty list of real catalog topic slugs")
@@ -297,6 +307,7 @@ class SyntheticUserGenerator:
         self.topic_slugs = list(topic_slugs)
         self.config = config or SimulatorConfig()
         self.cc_edges = cc_edges or {}
+        self.catalog_metadata = catalog_metadata or {}
         self._rng = random.Random(self.config.random_seed)
 
     # ------------------------------------------------------------- persona/graph setup
@@ -601,6 +612,7 @@ class SyntheticUserGenerator:
                     query_id=f"synthetic_q_{event_counter}",
                     user_id=user_id, recommended_at=recommended_at,
                     graph=graph_snapshot, plan=plan, candidates=final_candidates,
+                    catalog_metadata_by_problem_id=self.catalog_metadata,
                 ))
 
                 for candidate in final_candidates:

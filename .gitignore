@@ -37,6 +37,9 @@ POSTMAN_GUIDE.md
 # RGCN outputs
 pipeline/graphs/rgcn_artifacts/
 
+# Generated offline evaluation reports
+evaluation/reports/
+
 # Generated binary files
 *.parquet
 *.pt

@@ -267,6 +267,42 @@ def _check_neo4j() -> tuple[str, str, str]:
     return ("ok", "ready", "reachable")
 
 
+def _ranker_status() -> dict:
+    """
+    Current ranker mode + LightGBM model status -- purely informational,
+    does NOT affect `status`/`ready` (an unloaded LightGBM model is not a
+    service-impacting failure, it just means rank_candidates() falls back
+    to the heuristic ranker, exactly as designed).
+
+    Deliberately NOT folded into _run_checks()'s throttled/cached
+    dependency sequence above: get_lightgbm_ranker() is a process-wide
+    singleton that only ever does real disk I/O once (on the very first
+    call, success or failure both cached -- see lightgbm_ranker.py), so
+    every call after that is an in-memory lookup with no network/disk
+    cost to throttle.
+    """
+    from pipeline.recommender.services.lightgbm_ranker import (
+        LightGBMRankerError, get_lightgbm_ranker, get_ranker_mode,
+    )
+    mode = get_ranker_mode()
+    try:
+        ranker = get_lightgbm_ranker()
+        info = ranker.get_model_info() or {}
+        return {
+            "mode": mode,
+            "lightgbm_model_loaded": True,
+            "model_version": info.get("model_version"),
+            "best_iteration": info.get("best_iteration"),
+        }
+    except LightGBMRankerError:
+        return {
+            "mode": mode,
+            "lightgbm_model_loaded": False,
+            "model_version": None,
+            "best_iteration": None,
+        }
+
+
 def _run_checks() -> tuple[dict, bool]:
     """
     Execute every dependency probe once, uncached. Call handle_health()
@@ -430,19 +466,24 @@ def handle_health() -> tuple[dict, bool]:
             daemon=True, name="health-probe-refresh",
         ).start()
 
+    # Computed fresh on every call, uncached -- see _ranker_status()'s own
+    # docstring for why this doesn't need the throttling above. Never
+    # mutates `cached[1]` in place (that dict is shared with the cache).
+    ranker_status = _ranker_status()
+
     if fresh:
-        return cached[1], cached[2]
+        return {**cached[1], "ranker": ranker_status}, cached[2]
 
     if cached is not None:
         age = now - cached[0]
         if age <= _MAX_STALE_AGE:
             # Stale-but-known, within the trust window -- still the best
             # answer we have while a refresh is (or just became) in flight.
-            return cached[1], cached[2]
-        return _stale_body(age), False
+            return {**cached[1], "ranker": ranker_status}, cached[2]
+        return {**_stale_body(age), "ranker": ranker_status}, False
 
     # No cached result at all -- genuinely unknown yet.
-    return _starting_body(refresh_started_at, now), False
+    return {**_starting_body(refresh_started_at, now), "ranker": ranker_status}, False
 
 
 def reset_health_cache() -> None:

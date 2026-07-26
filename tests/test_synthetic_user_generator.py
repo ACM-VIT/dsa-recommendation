@@ -102,7 +102,7 @@ def _catalog(per_topic=15):
     return problems
 
 
-def _small_generator(num_users=3, seed=42, persona_distribution=None, cc_edges=None):
+def _small_generator(num_users=3, seed=42, persona_distribution=None, cc_edges=None, catalog_metadata=None):
     gen = SyntheticUserGenerator(
         qdrant=FakeQdrant(_catalog()),
         topic_slugs=_TOPICS,
@@ -112,6 +112,7 @@ def _small_generator(num_users=3, seed=42, persona_distribution=None, cc_edges=N
             total_n=20, k=8,
         ),
         cc_edges=cc_edges,
+        catalog_metadata=catalog_metadata,
     )
     return gen.generate()
 
@@ -234,6 +235,53 @@ class TestConceptConceptGraphInjection(unittest.TestCase):
         df = DatasetGenerator().generate_dataframe(result.events)
         self.assertIn("prerequisite_completion_ratio", df.columns)
         self.assertGreater(df["prerequisite_completion_ratio"].notna().sum(), 0)
+
+
+class TestCatalogMetadataInjection(unittest.TestCase):
+    """Proves catalog_metadata (company_tag_count/frequency/rating/
+    asked_by_faang) actually reaches every emitted RecommendationEvent,
+    and that DatasetGenerator populates the corresponding feature columns
+    once it does -- previously these 4 columns were always 100% NaN
+    because nothing ever passed catalog_metadata_by_problem_id through."""
+
+    def test_catalog_metadata_attached_to_every_event(self):
+        fake_metadata = {"array_0": {"companies": ["Google"], "frequency": 0.9,
+                                      "rating": 0.8, "asked_by_faang": True}}
+        result = _small_generator(num_users=3, catalog_metadata=fake_metadata)
+        self.assertGreater(len(result.events), 0)
+        for event in result.events:
+            self.assertEqual(event.catalog_metadata_by_problem_id, fake_metadata)
+
+    def test_no_catalog_metadata_means_empty_dict_not_a_crash(self):
+        # Default (catalog_metadata=None) must stay offline-safe -- {}
+        # rather than attempting any DB round trip, exactly like cc_edges.
+        result = _small_generator(num_users=2, catalog_metadata=None)
+        self.assertGreater(len(result.events), 0)
+        for event in result.events:
+            self.assertEqual(event.catalog_metadata_by_problem_id, {})
+
+    def test_catalog_metadata_populates_feature_columns_when_present(self):
+        fake_metadata = {
+            f"{topic}_{i}": {"companies": ["Google", "Amazon"], "frequency": 0.75,
+                             "rating": 0.85, "asked_by_faang": True}
+            for topic in _TOPICS for i in range(15)
+        }
+        result = _small_generator(num_users=6, seed=11, catalog_metadata=fake_metadata)
+        df = DatasetGenerator().generate_dataframe(result.events)
+        for col in ("company_tag_count", "frequency", "rating", "asked_by_faang"):
+            self.assertIn(col, df.columns)
+            self.assertGreater(df[col].notna().sum(), 0,
+                                f"{col} should be populated when catalog_metadata covers every candidate_id")
+        self.assertTrue((df["company_tag_count"].dropna() == 2.0).all())
+        self.assertTrue((df["frequency"].dropna() == 0.75).all())
+
+    def test_columns_stay_nan_when_catalog_metadata_absent(self):
+        # Existing (no catalog_metadata) behaviour is unchanged: still
+        # native NaN, not a fabricated value.
+        result = _small_generator(num_users=6, seed=11, catalog_metadata=None)
+        df = DatasetGenerator().generate_dataframe(result.events)
+        for col in ("company_tag_count", "frequency", "rating", "asked_by_faang"):
+            self.assertEqual(df[col].notna().sum(), 0)
 
 
 class TestForgettingAndReviewUrgency(unittest.TestCase):

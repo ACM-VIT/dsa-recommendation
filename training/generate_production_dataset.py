@@ -46,6 +46,7 @@ from training.config import (
 from training.dataset_generator import DatasetGenerator
 from training.feature_registry import build_default_registry
 from training.label_generator import LabelGenerator
+from training.catalog_metadata import load_catalog_metadata_by_problem_id
 from training.synthetic_user_generator import (
     SimulatorConfig,
     SyntheticUserGenerator,
@@ -165,6 +166,10 @@ def main():
     n_cc = sum(len(v) for v in cc_edges.values())
     print(f"Real concept-concept graph: {n_cc} edges")
 
+    catalog_metadata = load_catalog_metadata_by_problem_id()
+    print(f"Real catalog metadata (company/frequency/rating/asked_by_faang): "
+          f"{len(catalog_metadata)} problems resolved")
+
     config = SimulatorConfig(
         num_users=NUM_USERS,
         total_n=30,
@@ -173,6 +178,7 @@ def main():
     )
     generator = SyntheticUserGenerator(
         qdrant=qdrant, topic_slugs=topic_slugs, config=config, cc_edges=cc_edges,
+        catalog_metadata=catalog_metadata,
     )
     result = generator.generate()
     n_events = len(result.events)

@@ -69,6 +69,8 @@ from pipeline.recommender.services.candidate_store import CandidateStore, InMemo
 from pipeline.recommender.services.lightgbm_ranker import rank_candidates
 from pipeline.recommender.services.diversity_mixer import DiversityMixer
 
+from training.catalog_metadata import load_catalog_metadata_by_problem_id
+
 log = logging.getLogger(__name__)
 
 # Module-level default store. A controller can inject its own (e.g. a
@@ -243,11 +245,17 @@ def get_recommendations(
     # configuration) and always returns the same shape HeuristicRanker.top_k()
     # does, falling back to heuristic automatically if the ML model is
     # missing/mismatched/fails -- see pipeline/recommender/services/lightgbm_ranker.py.
+    # catalog_metadata_by_problem_id feeds LightGBM's company_tag_count/
+    # frequency/rating/asked_by_faang features from the same real manifest
+    # training/generate_production_dataset.py uses for the offline dataset
+    # (see training/catalog_metadata.py) -- cached after the first call, so
+    # this costs nothing on later requests.
     ranked_rows = rank_candidates(
         ranker_rows=ranker_rows,
         merged_candidates=gen_result.merged_candidates,
         graph=graph, plan=gen_result.difficulty_plan,
         k=max(k * 3, k),   # over-fetch for the mixer to diversify from
+        catalog_metadata_by_problem_id=load_catalog_metadata_by_problem_id(),
     )
 
     # DiversityMixer works on MergedCandidate-shaped objects; ranked_rows are
